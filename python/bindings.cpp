@@ -8,7 +8,7 @@ namespace py = pybind11;
 // Concrete implementation of IPrinter
 class PythonPrinter : public lc3::utils::IPrinter {
 public:
-    void print(std::string const & string) override { std::cout << string; }
+    void print(std::string const & string) override { std::cout << string;}
     void newline(void) override { std::cout << std::endl; }
     // Added missing method:
     void setColor(lc3::utils::PrintColor color) override { (void)color; } 
@@ -33,6 +33,29 @@ PYBIND11_MODULE(lc3py, m) {
     // Bind the Inputter interface
     py::class_<PythonInputter>(m, "Inputter")
         .def(py::init<>());
+
+// --- Assembler Binding ---
+    py::class_<lc3::as>(m, "Assembler")
+        .def(py::init([](PythonPrinter & p, uint32_t print_level, bool enable_liberal_asm) {
+            return new lc3::as(p, print_level, enable_liberal_asm);
+        }), py::arg("printer"), py::arg("print_level") = 1, py::arg("enable_liberal_asm") = false)
+        
+        // Custom wrapper for assemble to handle lc3::optional and the complex return type
+        .def("assemble", [](lc3::as &self, std::string const & asm_filename) -> py::object {
+            // Call the actual C++ function
+            auto result = self.assemble(asm_filename);
+            
+            // Check if the lc3::optional has a value (assuming it has has_value() or operator bool)
+            if (result) {
+                // result->first is the string filename
+                // result->second is the symbol table (map)
+                // For now, let's just return the filename to Python
+                return py::cast(result->first);
+            } else {
+                // Return None if assembly failed
+                return py::none();
+            }
+        }, py::arg("asm_filename"), "Assembles a file and returns the output filename or None");
 
     // Bind the lc3::sim class
     py::class_<lc3::sim>(m, "Simulator")
