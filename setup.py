@@ -23,7 +23,7 @@ ext_modules = [
         sources=sources,
         include_dirs=include_dirs,
         language='c++',
-        extra_compile_args=['-std=c++11', '-Wno-error=format-security'],
+        extra_compile_args=['-std=c++11', '-Wno-error=format-security', '-Wno-format-security'],
     ),
 ]
 
