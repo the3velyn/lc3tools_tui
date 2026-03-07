@@ -10,11 +10,18 @@ class PythonPrinter : public lc3::utils::IPrinter{
 public:
     PythonPrinter() {buffer = "";};
     std::string buffer;
+    std::string retstr; //Allows passing a c_str pointer to python
     void print(std::string const & string) override { buffer = buffer + string;}
     std::string read(){
-        auto tmp = buffer;
+        retstr = buffer;
         buffer = "";
-        return tmp;
+        /*
+        I am doing it this way because the simulator writes a bunch of garbage
+        to the buffer when the instruction limit is reached, but it starts with
+        a \0 character, so returning the C string prevents python from trying
+        to print garbage and crashing. -Doug
+        */
+        return retstr.c_str();
     }
     void newline(void) override { buffer = buffer + "\n"; }
     void setColor(lc3::utils::PrintColor color) override { (void)color; } 
@@ -30,11 +37,10 @@ public:
         idx = 0;
     }
     bool getChar(char & c) override {
-        if(c < buffer.length()){
+        if(idx < buffer.length()){
             c = buffer[idx++];
             return true;
         } else {
-            throw(std::runtime_error("Input buffer is empty."));
             return false;
         }
     }
@@ -97,7 +103,9 @@ PYBIND11_MODULE(core, m) {
         .def("read_reg", &lc3::sim::readReg, "Read a register value (0-7)")
         .def("write_reg", &lc3::sim::writeReg, "Write a register value (0-7)")
         .def("set_pc", &lc3::sim::setPC, "Set the Program Counter")
-        .def("get_pc", &lc3::sim::getPC, "Get the Program Counter");
+        .def("get_pc", &lc3::sim::getPC, "Get the Program Counter")
+        .def("set_inst_limit", &lc3::sim::setRunInstLimit, "Set instruction limit")
+        .def("exceeded_inst_limit", &lc3::sim::didExceedInstLimit, "return true if instruction limit reached");
 
     // Note: You may also need to wrap lc3::utils::IPrinter or 
     // provide a simple wrapper for it to see output in Python.

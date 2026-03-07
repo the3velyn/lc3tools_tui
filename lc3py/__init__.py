@@ -52,3 +52,9 @@ class Simulator:
     def set_pc(self, value):
         self.sim.set_pc(value)
     
+    def set_inst_limit(self, value):
+        self.sim.set_inst_limit(value)
+
+    def exceeded_inst_limit(self):
+        return self.sim.exceeded_inst_limit()
+    
