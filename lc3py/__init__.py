@@ -1,5 +1,5 @@
 from .core import Simulator as _Simulator, Assembler, Printer, Inputter
-
+import time
 
 
 class Simulator:
@@ -58,3 +58,5 @@ class Simulator:
     def exceeded_inst_limit(self):
         return self.sim.exceeded_inst_limit()
     
+    def randomize(self):
+        return self.sim.randomize(int(time.time()))

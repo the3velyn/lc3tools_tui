@@ -96,6 +96,7 @@ PYBIND11_MODULE(core, m) {
         .def("step_in", &lc3::sim::stepIn, "Execute a single instruction")
         .def("step_over", &lc3::sim::stepOver, "Execute a single instruction")
         .def("step_out", &lc3::sim::stepOut, "Execute a single instruction")
+        .def("randomize", &lc3::sim::randomizeState, "Randomize the simulator memory and regs")
         
         // Memory and Register Access
         .def("read_mem", &lc3::sim::readMem, "Read value from memory address")
