@@ -229,7 +229,12 @@ bool promptMain(lc3::sim & simulator, std::stringstream & command_tokens)
         }
         std::cout << lc3::utils::ssprintf("PC: 0x%0.4X\n", simulator.readPC());
         std::cout << lc3::utils::ssprintf("PSR: 0x%0.4X\n", simulator.readPSR());
-        std::cout << lc3::utils::ssprintf("CC: %c\n", simulator.readCC());
+        auto psr = simulator.readPSR();
+        char cc_char;
+        if(psr & 4u) cc_char = 'N';
+        else if(psr & 2u) cc_char = 'Z';
+        else cc_char = 'P';
+        std::cout << lc3::utils::ssprintf("CC: %c\n", cc_char);
         std::cout << lc3::utils::ssprintf("MCR: 0x%0.4X\n", simulator.readMCR());
     } else if(command == "run") {
         uint32_t inst_limit;
