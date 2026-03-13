@@ -41,6 +41,9 @@ class Simulator:
 
     def write_mem(self, addr, value):
         self.sim.write_mem(addr, value)
+    
+    def read_mem_line(self, addr):
+        return self.sim.read_mem_line(addr)
 
     def read_reg(self, reg):
         return self.sim.read_reg(reg)

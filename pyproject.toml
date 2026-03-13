@@ -11,3 +11,4 @@ requires-python = ">=3.7"
 [project.scripts]
 lc3asm = "lc3py.cli:lc3asm"
 lc3sim = "lc3py.cli:lc3sim"
+lc3pysim = "lc3py.cli:lc3pysim"

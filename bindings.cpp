@@ -139,6 +139,7 @@ PYBIND11_MODULE(core, m) {
         
         // Memory and Register Access
         .def("read_mem", &lc3::sim::readMem, "Read value from memory address")
+        .def("read_mem_line", &lc3::sim::getMemLine, "Read asm or bin line of memory at address")
         .def("write_mem", &lc3::sim::writeMem, "Write value to memory address")
         .def("read_reg", &lc3::sim::readReg, "Read a register value (0-7)")
         .def("write_reg", &lc3::sim::writeReg, "Write a register value (0-7)")
