@@ -5,8 +5,8 @@
 
 namespace py = pybind11;
 
-int asm_main(int argc, char **argv);
-int sim_main(int argc, char **argv);
+int asm_main(int argc, char ** const argv);
+int sim_main(int argc, char ** const argv);
 
 int asm_main_py(std::vector<std::string> args){
     int argc = static_cast<int>(args.size());

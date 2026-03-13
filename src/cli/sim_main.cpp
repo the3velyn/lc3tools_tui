@@ -47,7 +47,7 @@ struct CLIArgs
     bool ignore_privilege = false;
 };
 
-int sim_main(int argc, char * argv[])
+int sim_main(int argc, char ** const argv)
 {
     CLIArgs args;
     std::vector<std::pair<std::string, std::string>> parsed_args = parseCLIArgs(argc, argv);
