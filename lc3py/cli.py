@@ -134,9 +134,11 @@ def draw_mem(mem_win, sim, breakpoints, status):
             if (".fill" in sim.read_mem_line(i).lower()):
                 tmp = sim.read_mem_line(i).lower().split(".fill")
                 if (len(tmp) > 1):
-                    line += f"{tmp[0].upper().strip()} "
-                    while len(line) < 20:
-                        line += " "
+                    tmp = tmp[0].strip()
+                    if len(tmp) > 0:
+                        line += f"{tmp.upper()} "
+                        while len(line) < 20:
+                            line += " "
             line += f"x{val:04X} {val} {signedval} {char}"
         else:
             line += sim.read_mem_line(i)
