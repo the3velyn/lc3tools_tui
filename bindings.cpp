@@ -56,8 +56,12 @@ public:
     std::string buffer;
     uint32_t idx;
     void setInput(std::string in) {
-        buffer = in;
-        idx = 0;
+        if(idx >= buffer.length()){
+            buffer = in;
+            idx = 0;
+        } else {
+            buffer = buffer + in;
+        }
     }
     bool getChar(char & c) override {
         if(idx < buffer.length()){
