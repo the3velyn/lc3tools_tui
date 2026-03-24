@@ -142,6 +142,7 @@ PYBIND11_MODULE(core, m) {
         .def("randomize", &lc3::sim::randomizeState, "Randomize the simulator memory and regs")
         
         // Memory and Register Access
+        .def("read_psr", &lc3::sim::readPSR, "Read the PSR")
         .def("read_mem", &lc3::sim::readMem, "Read value from memory address")
         .def("read_mem_line", &lc3::sim::getMemLine, "Read asm or bin line of memory at address")
         .def("write_mem", &lc3::sim::writeMem, "Write value to memory address")

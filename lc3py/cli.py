@@ -64,7 +64,15 @@ def registers_str(sim):
             char = "-" + char
         lines.append(f"R{i}:\tx{val:04X}\t{val}\t{signedval}\t{char}")
     lines.append("\n")
-    lines.append(f"PC: x{sim.get_pc():04X}\tCC: To do")
+    cc = ""
+    psr = sim.read_psr()
+    if psr & 1:
+        cc = "P"
+    elif psr & 2:
+        cc = "Z"
+    elif psr & 4:
+        cc = "N"
+    lines.append(f"PC: x{sim.get_pc():04X}\tCC: {cc}")
     return lines
 
 def mem_str(maxy, maxx, sim, breakpoints, status):
@@ -75,6 +83,8 @@ def mem_str(maxy, maxx, sim, breakpoints, status):
         line = ""
         if sim.get_pc() == i:
             line += ">"
+        elif sim.get_pc() < 0x3000 and sim.read_mem(0x2ffe)-1 == i:
+            line += "T"
         else:
             line += " "
 
@@ -171,6 +181,8 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
                 console_out.put(stdout)
             if sim.get_pc() >= 0x3000:
                 status['pc'] = sim.get_pc()
+            else:
+                status['rti_pc'] = sim.read_mem(0x2ffe)
             with locks['reg']:
                 reg_lines [:] = []
                 reg_lines.extend(registers_str(sim))
@@ -244,6 +256,7 @@ def cli_main(stdscr):
     status['mode'] = 'break'
     status['baseaddr'] = 0x01fe
     status['pc'] = 0x01fe
+    status['rti_pc'] = 0x3000
     breakpoints = []
     #sim = lc3py.Simulator()
     curses.curs_set(0) # Hide cursor
@@ -319,7 +332,11 @@ def cli_main(stdscr):
         reg_win.box()
         reg_win.noutrefresh()
 
-        status['baseaddr'] = status['pc'] - 3
+        if status['pc'] >= 0x3000:
+            status['baseaddr'] = status['pc'] - 3
+        else:
+            status['baseaddr'] = status['rti_pc'] - 3
+
         mem_win.erase()
         mem_win.addstr(0,2, " Memory ")
         #mem_lines = draw_mem(mem_win.getmaxyx()[0], mem_win.getmaxyx()[1], sim, breakpoints, status)

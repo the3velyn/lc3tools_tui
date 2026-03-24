@@ -51,6 +51,9 @@ class Simulator:
     def write_reg(self, reg, value):
         self.sim.write_reg(reg, value)
 
+    def read_psr(self):
+        return self.sim.read_psr()
+
     def get_pc(self):
         return self.sim.get_pc()
     
