@@ -257,9 +257,12 @@ def cli_main(stdscr):
     hotkeys_win = curses.newwin(hotkeyheight, maxx-status['col0width'], 0, status['col0width'])
     console_win = curses.newwin(maxy-hotkeyheight, maxx-status['col0width'], hotkeyheight, status['col0width'])
     curses.use_default_colors()
-    curses.set_escdelay(25)
+    try:
+        curses.set_escdelay(25)
+    except:
+        pass
     stdscr.clear()
-    curses.resizeterm(maxy,maxx)
+    curses.resize_term(maxy,maxx)
     stdscr.refresh()
 
     console_tmp = []
@@ -291,7 +294,7 @@ def cli_main(stdscr):
             stdscr.erase()
             if stdscr.getmaxyx() != (maxy,maxx):
                 maxy, maxx = stdscr.getmaxyx()
-                curses.resizeterm(maxy,maxx)
+                curses.resize_term(maxy,maxx)
             reg_win.resize(13, status['col0width'])
             mem_win.resize(maxy-13, status['col0width'])
             move_and_resize(hotkeys_win, 0, status['col0width'], hotkeyheight, maxx-status['col0width'])
