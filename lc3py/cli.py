@@ -178,7 +178,8 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
                         status['mode'] = 'running'
             stdout = sim.read()
             if len(stdout) > 0:
-                console_out.put(stdout)
+                with locks['console']:
+                    console_out.put(stdout)
             status['pc'] = sim.get_pc()
             status['rti_pc'] = sim.read_mem(0x2ffe)
             with locks['reg']:
@@ -204,9 +205,17 @@ def input_handler(stdscr, status, kbd_input):
             if key == ord('h'):
                 status['col0width'] = max(39,status['col0width'] - 1)
             if key == ord('l'):
-                status['col0width'] = status['col0width'] + 1
+                status['col0width'] = min(status['col0width'] + 1, status['maxx'])
             if key == ord('s'):
                 kbd_input.put(key)
+            if key == ord('n'):
+                status['mem_locked'] = not status['mem_locked']
+            if key == ord('k'):
+                status['mem_locked'] = True
+                status['baseaddr'] -= 1
+            if key == ord('j'):
+                status['mem_locked'] = True
+                status['baseaddr'] += 1
         else:
             kbd_input.put(key)
 
@@ -242,8 +251,14 @@ def hotkey_str(status, win_width):
     if status['mode'] == 'running':
         retstr = "Input forwarded to LC3 keyboard. Press [Esc] to pause simulator."
     elif status['mode'] == 'break':
-        retstr = "s:step-in o:step-over r:run q:quit b:breakpoints h:hsplit-left l:hsplit-right restart reassemble lock-mem-screen" 
-    
+        lockstr = ""
+        if status['mem_locked'] == True:
+            lockstr = "unlock"
+        else:
+            lockstr = "lock"
+        retstr = f"s:step-in o:step-over r:run q:quit b:breakpoints h:hsplit-left "
+        retstr += f"l:hsplit-right restart reassemble n:{lockstr}-mem-screen k:mem-scroll-up j:mem-scroll-down" 
+    strwidth = max(5, strwidth)
     retstr = textwrap.wrap(retstr, strwidth, break_long_words=False, break_on_hyphens=False)
     return retstr
 
@@ -255,10 +270,15 @@ def cli_main(stdscr):
     status['baseaddr'] = 0x01fe
     status['pc'] = 0x01fe
     status['rti_pc'] = 0x3000
+    status['mem_locked'] = False
     breakpoints = []
     #sim = lc3py.Simulator()
     curses.curs_set(0) # Hide cursor
     maxy, maxx = stdscr.getmaxyx()
+    maxx = max(maxx, 80)
+    maxy = max(maxy, 20)
+    status['maxx'] = maxx
+    status['maxy'] = maxy
     status['col0width'] = 45
     last_col0width = 45
     hotkey_prompt = hotkey_str(status, maxx-status['col0width'])
@@ -298,14 +318,19 @@ def cli_main(stdscr):
 
     while True:
         #Update size and location of windows
-        hotkey_prompt = hotkey_str(status, stdscr.getmaxyx()[1]-status['col0width'])
-        if stdscr.getmaxyx() != (maxy,maxx) or (len(hotkey_prompt) < hotkeyheight+2) or last_col0width != status['col0width']:
+        new_maxy, new_maxx = stdscr.getmaxyx()
+        new_maxx = max(80, new_maxx)
+        new_maxy = max(20, new_maxy)
+        hotkey_prompt = hotkey_str(status, new_maxx-status['col0width'])
+        if (new_maxy, new_maxx) != (maxy,maxx) or (len(hotkey_prompt) < hotkeyheight+2) or last_col0width != status['col0width']:
             last_col0width = status['col0width']
             hotkeyheight = len(hotkey_prompt) + 2
             stdscr.erase()
-            if stdscr.getmaxyx() != (maxy,maxx):
-                maxy, maxx = stdscr.getmaxyx()
+            if (new_maxy, new_maxx) != (maxy,maxx):
+                maxy, maxx = (new_maxy, new_maxx)
                 curses.resize_term(maxy,maxx)
+                status['maxx'] = new_maxx
+                status['maxy'] = new_maxy
             reg_win.resize(13, status['col0width'])
             mem_win.resize(maxy-13, status['col0width'])
             move_and_resize(hotkeys_win, 0, status['col0width'], hotkeyheight, maxx-status['col0width'])
@@ -330,14 +355,14 @@ def cli_main(stdscr):
         reg_win.box()
         reg_win.noutrefresh()
 
-        if status['pc'] >= 0x3000:
-            status['baseaddr'] = status['pc'] - 3
-        else:
-            status['baseaddr'] = status['rti_pc'] - 3
+        if not status['mem_locked']:
+            if status['pc'] >= 0x3000:
+                status['baseaddr'] = status['pc'] - 3
+            else:
+                status['baseaddr'] = status['rti_pc'] - 3
 
         mem_win.erase()
         mem_win.addstr(0,2, " Memory ")
-        #mem_lines = draw_mem(mem_win.getmaxyx()[0], mem_win.getmaxyx()[1], sim, breakpoints, status)
         with locks['mem']:
             for i in range(len(mem_lines)):
                 try:
@@ -350,7 +375,10 @@ def cli_main(stdscr):
         
         hotkeys_win.erase()
         hotkeys_win.box()
-        hotkeys_win.addstr(0,2, " Hotkeys ")
+        try:
+            hotkeys_win.addstr(0,2, " Hotkeys ")
+        except:
+            pass
         for i in range(len(hotkey_prompt)):
             try:
                 hotkeys_win.addstr(i+1, 1, hotkey_prompt[i])
@@ -373,21 +401,27 @@ def cli_main(stdscr):
 
         console_win.erase()
         console_win.box()
-        console_win.addstr(0,2, " Console ")
+        try:
+            console_win.addstr(0,2, " Console ")
+        except:
+            pass
         console_pos = console_win.getmaxyx()[0]-2
-        for line in reversed(console_deque):
-            if len(line) == 0:
-                console_pos -= 1
-                continue
-            wrapped = textwrap.wrap(line, console_win.getmaxyx()[1]-2)
-            for subline in reversed(wrapped):
-                console_win.addstr(console_pos, 1, subline)
-                console_pos -= 1
+        with locks['console']:
+            for line in reversed(console_deque):
+                if len(line) == 0:
+                    console_pos -= 1
+                    continue
+                wrapped = textwrap.wrap(line, console_win.getmaxyx()[1]-2)
+                for subline in reversed(wrapped):
+                    try:
+                        console_win.addstr(console_pos, 1, subline)
+                    except:
+                        pass
+                    console_pos -= 1
+                    if console_pos <= 0:
+                        break
                 if console_pos <= 0:
                     break
-            if console_pos <= 0:
-                break
-        #console_win.addstr(1,2, str(len(hotkey_prompt)))
         console_win.noutrefresh()
         
         if status['run'] == False:
