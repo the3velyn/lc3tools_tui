@@ -224,11 +224,14 @@ def input_handler(stdscr, status, kbd_input, breakpoints, locks):
         elif status['mode'] == 'set_breakpoint':
             if key in [10, 13, curses.KEY_ENTER]:
                 with locks['breakpoint']:
-                    bp = int(status['breakpoint'], 16)
-                    if bp in breakpoints:
-                        breakpoints.remove(bp)
-                    else:
-                        breakpoints.append(bp)
+                    try:
+                        bp = int(status['breakpoint'], 16)
+                        if bp in breakpoints:
+                            breakpoints.remove(bp)
+                        else:
+                            breakpoints.append(bp)
+                    except:
+                        pass
                 status['breakpoint'] = ""
                 status['mode'] = 'break'
             if curses.ascii.isascii(key):
