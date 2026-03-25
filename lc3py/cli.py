@@ -2,6 +2,7 @@ import sys
 from .cli_bindings import asm_main, sim_main
 import lc3py
 import curses
+import curses.ascii
 import threading
 import multiprocessing
 import time
@@ -16,17 +17,6 @@ def lc3asm():
 
 def lc3sim():
     sys.exit(sim_main(sys.argv))
-
-def sim_run(sim, breakpoints, input_text = ""):
-    while True:
-        sim.step_in()
-        if sim.get_pc() in breakpoints:
-            print(f"Hit breakpoint at x{sim.get_pc():04X}")
-            print(f"x{sim.get_pc():04X}: {sim.read_mem_line(sim.get_pc())}")
-            break
-        if sim.read_mem(sim.get_pc()) == 0xf025:
-            print("\n\nHALT")
-            break
 
 def load_args(sim):
     if len(sys.argv) > 1:
@@ -75,7 +65,7 @@ def registers_str(sim):
     lines.append(f"PC: x{sim.get_pc():04X}\tCC: {cc}")
     return lines
 
-def mem_str(maxy, maxx, sim, breakpoints, status):
+def mem_str(maxy, maxx, sim, breakpoints, status, locks):
     addrcount = maxy-2
     maxchars = maxx -2
     lines = []
@@ -88,10 +78,11 @@ def mem_str(maxy, maxx, sim, breakpoints, status):
         else:
             line += " "
 
-        if i in breakpoints:
-            line += "B"
-        else:
-            line += " "
+        with locks["breakpoint"]:
+            if i in breakpoints:
+                line += "B"
+            else:
+                line += " "
         line += f"x{i:04X}: "
         if(".fill" in sim.read_mem_line(i).lower()) or sim.read_mem_line(i) == "":
             val = sim.read_mem(i)
@@ -135,6 +126,7 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
     next_screen_update = time.time() + 0.1
     running = False
     step_trap = False
+    break_set = False
     while(True):
 
         if sim.read_mem(sim.get_pc()) == 0xf025:
@@ -142,18 +134,24 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
             running = False
         
         if running:
-            sim.step_in()
-            if step_trap:
-                if sim.get_pc() >= 0x3000:
-                    running = False
-                    step_trap = False
-                    status['mode'] = 'break'
+            if sim.get_pc() in breakpoints and not break_set:
+                break_set = True
+                running = False
+                status['mode'] = 'break'
+            else:
+                break_set = False
+                sim.step_in()
+                if step_trap:
+                    if sim.get_pc() >= 0x3000:
+                        running = False
+                        step_trap = False
+                        status['mode'] = 'break'
         else:
             time.sleep(0.01) #lower CPU usage while stopped
             if not kbd_input.empty():
                 key = kbd_input.get()
                 if key == ord('s'):
-                    if sim.read_mem(sim.get_pc()) >> 12 == 0xF:
+                    if sim.read_mem(sim.get_pc()) >> 12 == 0xF or sim.get_pc() < 0x3000:
                         step_trap = True
                         running = True
                         status['mode'] = 'running'
@@ -180,6 +178,9 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
             if len(stdout) > 0:
                 with locks['console']:
                     console_out.put(stdout)
+            if status['restart']:
+                status['restart'] = False
+                sim.set_pc(0x3000)
             status['pc'] = sim.get_pc()
             status['rti_pc'] = sim.read_mem(0x2ffe)
             with locks['reg']:
@@ -187,10 +188,10 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
                 reg_lines.extend(registers_str(sim))
             with locks['mem']:
                 mem_lines[:] = []
-                mem_lines.extend(mem_str(status['mem_maxyx'][0], status['mem_maxyx'][1], sim, breakpoints, status))
+                mem_lines.extend(mem_str(status['mem_maxyx'][0], status['mem_maxyx'][1], sim, breakpoints, status, locks))
     return
 
-def input_handler(stdscr, status, kbd_input):
+def input_handler(stdscr, status, kbd_input, breakpoints, locks):
     while(True):
         key = stdscr.getch()
         if key == 27:
@@ -216,6 +217,25 @@ def input_handler(stdscr, status, kbd_input):
             if key == ord('j'):
                 status['mem_locked'] = True
                 status['baseaddr'] += 1
+            if key == ord('e'):
+                status['restart'] = True
+            if key == ord('b'):
+                status['mode'] = 'set_breakpoint'
+        elif status['mode'] == 'set_breakpoint':
+            if key in [10, 13, curses.KEY_ENTER]:
+                with locks['breakpoint']:
+                    bp = int(status['breakpoint'], 16)
+                    if bp in breakpoints:
+                        breakpoints.remove(bp)
+                    else:
+                        breakpoints.append(bp)
+                status['breakpoint'] = ""
+                status['mode'] = 'break'
+            if curses.ascii.isascii(key):
+                status['breakpoint'] += chr(key)
+            if key == curses.KEY_BACKSPACE:
+                if len(status['breakpoint']) > 0:
+                    status['breakpoint'] = status['breakpoint'][:-1]
         else:
             kbd_input.put(key)
 
@@ -257,7 +277,9 @@ def hotkey_str(status, win_width):
         else:
             lockstr = "lock"
         retstr = f"s:step-in o:step-over r:run q:quit b:breakpoints h:hsplit-left "
-        retstr += f"l:hsplit-right restart reassemble n:{lockstr}-mem-screen k:mem-scroll-up j:mem-scroll-down" 
+        retstr += f"l:hsplit-right e:restart reassemble n:{lockstr}-mem-screen k:mem-scroll-up j:mem-scroll-down" 
+    elif status['mode'] == 'set_breakpoint':
+        retstr = f"Enter address to toggle breakpoint: {status['breakpoint']}"
     strwidth = max(5, strwidth)
     retstr = textwrap.wrap(retstr, strwidth, break_long_words=False, break_on_hyphens=False)
     return retstr
@@ -271,6 +293,8 @@ def cli_main(stdscr):
     status['pc'] = 0x01fe
     status['rti_pc'] = 0x3000
     status['mem_locked'] = False
+    status['restart'] = False
+    status['breakpoint'] = ""
     breakpoints = []
     #sim = lc3py.Simulator()
     curses.curs_set(0) # Hide cursor
@@ -300,18 +324,20 @@ def cli_main(stdscr):
     console_deque = collections.deque()
     current_console_line = ""
 
-    kbd_input = mgr.Queue()
-    input_thread = threading.Thread(target=input_handler, args=[stdscr, status, kbd_input], daemon=True)
-    input_thread.start()
-
     reg_lines = mgr.list()
     mem_lines = mgr.list()
     breakpoints = mgr.list()
     console_q = mgr.Queue()
+    kbd_input = mgr.Queue()
     locks = mgr.dict()
     locks['mem'] = mgr.Lock()
     locks['reg'] = mgr.Lock()
     locks['console'] = mgr.Lock()
+    locks['breakpoint'] = mgr.Lock()
+
+    input_thread = threading.Thread(target=input_handler, args=[stdscr, status, kbd_input, breakpoints, locks], daemon=True)
+    input_thread.start()
+
 
     sim = multiprocessing.Process(target=sim_proc, args=[reg_lines, mem_lines, breakpoints, console_q, kbd_input, status, locks])
     sim.start()
