@@ -9,6 +9,12 @@ import time
 import textwrap
 import collections
 
+profile = False
+
+if profile:
+    import cProfile, pstats, io
+    from pstats import SortKey
+
 #from .core import sim_backend
 
 def lc3asm():
@@ -466,5 +472,17 @@ def cli_main(stdscr):
     input_thread.join()
     sim.join()
             
-def lc3pysim():    
+def lc3pysim():
+    pr = None
+    if profile:
+        pr = cProfile.Profile()
+        pr.enable()
     curses.wrapper(cli_main)
+    if profile:
+        pr.disable()
+        s = io.StringIO()
+        sortby = SortKey.CUMULATIVE
+        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        with open("profile.txt", "w") as f:
+            f.write(s.getvalue())
