@@ -466,6 +466,7 @@ def cli_main(stdscr):
         if status['run'] == False:
             break
         
+        stdscr.refresh()
         curses.doupdate()
 
         time.sleep(0.05)
