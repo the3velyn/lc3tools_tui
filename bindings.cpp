@@ -2,6 +2,7 @@
 #include <pybind11/stl.h>  // Essential for std::string and std::vector conversion
 #include "interface.h"     // Include the lc3tools main interface header
 #include "utils.h"
+#include <cstdio>
 
 namespace py = pybind11;
 
@@ -120,8 +121,7 @@ PYBIND11_MODULE(core, m) {
             if (result) {
                 // result->first is the string filename
                 // result->second is the symbol table (map)
-                // For now, let's just return the filename to Python
-                return py::cast(result->first);
+                return py::cast(std::make_pair(result->first, result->second));
             } else {
                 // Return None if assembly failed
                 return py::none();
