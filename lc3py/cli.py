@@ -192,9 +192,9 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
                 mem_lines.extend(mem_str(status['mem_maxyx'][0], status['mem_maxyx'][1], sim, breakpoints, status, locks))
     return
 
-def input_handler(stdscr, status, kbd_input, breakpoints, locks):
+def input_handler(stdscr, status, kbd_input, breakpoints, locks, kbdwindow):
     while(True):
-        key = stdscr.getch()
+        key = kbdwindow.getch()
         if key == 27:
             status['mode'] = 'break'
     
@@ -315,6 +315,7 @@ def cli_main(stdscr):
     mem_win = curses.newwin(maxy-13, status['col0width'], 13, 0)
     hotkeys_win = curses.newwin(hotkeyheight, maxx-status['col0width'], 0, status['col0width'])
     console_win = curses.newwin(maxy-hotkeyheight, maxx-status['col0width'], hotkeyheight, status['col0width'])
+    kbdwindow = curses.newwin(0,0,0,0)
     curses.use_default_colors()
     try:
         curses.set_escdelay(25)
@@ -339,7 +340,7 @@ def cli_main(stdscr):
     locks['console'] = mgr.Lock()
     locks['breakpoint'] = mgr.Lock()
 
-    input_thread = threading.Thread(target=input_handler, args=[stdscr, status, kbd_input, breakpoints, locks], daemon=True)
+    input_thread = threading.Thread(target=input_handler, args=[stdscr, status, kbd_input, breakpoints, locks, kbdwindow], daemon=True)
     input_thread.start()
 
 
