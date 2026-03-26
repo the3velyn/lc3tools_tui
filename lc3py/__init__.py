@@ -21,8 +21,11 @@ class Simulator:
     def write(self, str):
         self.input.set_input(str)
     
-    def assemble(self, asmfile):
-        return self.asm.assemble(asmfile)
+    def assemble(self, asmfile, ret_symtab=False):
+        if not ret_symtab:
+            return self.asm.assemble(asmfile)[0]
+        else:
+            return self.asm.assemble(asmfile)
 
     def load_obj(self, objfile):
         return self.sim.load_object_file(objfile)

@@ -1,4 +1,34 @@
-# LC3Tools [![Build Status](https://travis-ci.org/chiragsakhuja/lc3tools.svg?branch=master)](https://travis-ci.org/chiragsakhuja/lc3tools)
+# LC3Tools [![Build Status]
+
+## Installation
+
+### Windows
+
+In PowerShell, run the following commands:
+```
+winget install Git.Git --source winget
+winget install python3 --source winget
+winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" --source winget
+```
+Close and reopen PowerShell, and run the following commands:
+```
+cd ~
+git clone https://github.com/DougTownsend/lc3tools
+cd lc3tools
+pip3 install windows-curses
+pip3 install .
+```
+
+## Mac
+
+To do
+
+## Linux
+
+To do
+
+## Original Readme:
+
 LC3Tools is a modern set of tools to build code for and simulate the LC-3
 system described in *Introduction to Computing* by Dr. Yale Patt and Dr. Sanjay
 Patel.
