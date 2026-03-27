@@ -33,11 +33,11 @@ git clone https://github.com/the3velyn/lc3tools_tui
 cd lc3tools_tui
 pip3 install .
 ```
-Update:
+Update: Replace BRANCH with "master" or "dev".
 ```bash
 cd ~/lc3tools_tui
-git pull
-cd lc3tools_tui
+git checkout BRANCH
+git pull origin BRANCH
 pip3 install .
 ```
 ## Usage:
