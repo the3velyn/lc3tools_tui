@@ -1,17 +1,42 @@
 # Evelyn's **lc3tools** fork: a C++ TUI with additional quality-of-life features.
 ### Prerequisites:
-- Python >3.14
+- Python >3.7
 - CMake
-## Installing on Windows:
+- (Windows) MSVC
+## Installing on Windows: (The following commands to install pre-requisites have yet to be tested. Please reach out if they don't work.)
 Prerequisites:
 ```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools"
+winget install Kitware.CMake
 winget install Git.Git --source winget
 winget install python3 --source winget
+pip install cmake
 ```
-Installation/Update:
+Installation:
 ```powershell
 cd ~
 git clone https://github.com/the3velyn/lc3tools_tui
+cd lc3tools_tui
+pip3 install .
+```
+Update:
+```powershell
+cd ~/lc3tools_tui
+git pull
+cd lc3tools_tui
+pip3 install .
+```
+## Installing on Linux (Debian-based):
+```bash
+cd ~
+git clone https://github.com/the3velyn/lc3tools_tui
+cd lc3tools_tui
+pip3 install .
+```
+Update:
+```bash
+cd ~/lc3tools_tui
+git pull
 cd lc3tools_tui
 pip3 install .
 ```
