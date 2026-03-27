@@ -9,7 +9,7 @@ import time
 import textwrap
 import collections
 
-profile = False
+profile = True
 
 if profile:
     import cProfile, pstats, io
@@ -23,6 +23,22 @@ def lc3asm():
 
 def lc3sim():
     sys.exit(sim_main(sys.argv))
+
+def lc3tui():
+    """Launch the C++ ncurses/PDCurses TUI debugger."""
+    import os, subprocess
+    pkg_dir = os.path.dirname(__file__)
+    if sys.platform == 'win32':
+        binary = os.path.join(pkg_dir, "lc3tui.exe")
+    else:
+        binary = os.path.join(pkg_dir, "lc3tui")
+    if not os.path.exists(binary):
+        print("Error: lc3tui binary not found. Install PDCurses (Windows) or ncurses (Linux/macOS).")
+        sys.exit(1)
+    if sys.platform == 'win32':
+        sys.exit(subprocess.call([binary] + sys.argv[1:]))
+    else:
+        os.execv(binary, [binary] + sys.argv[1:])
 
 def load_args(sim):
     if len(sys.argv) > 1:
