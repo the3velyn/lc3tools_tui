@@ -19,11 +19,11 @@ git clone https://github.com/the3velyn/lc3tools_tui
 cd lc3tools_tui
 pip3 install .
 ```
-Update: Replace BRANCH with "master" or "dev".
+Update: Replace "master" with "dev" to switch to unstable development branch.
 ```powershell
 cd ~/lc3tools_tui
-git checkout BRANCH
-git pull origin BRANCH
+git checkout master
+git pull origin master
 pip3 install .
 ```
 ## Installing on Linux (Debian-based):
@@ -33,11 +33,11 @@ git clone https://github.com/the3velyn/lc3tools_tui
 cd lc3tools_tui
 pip3 install .
 ```
-Update: Replace BRANCH with "master" or "dev".
+Update: Replace "master" with "dev" to switch to unstable development branch.
 ```bash
 cd ~/lc3tools_tui
-git checkout BRANCH
-git pull origin BRANCH
+git checkout master
+git pull origin master
 pip3 install .
 ```
 ## Usage:
