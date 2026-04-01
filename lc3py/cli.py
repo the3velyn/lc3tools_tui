@@ -181,13 +181,19 @@ def sim_proc(reg_lines, mem_lines, breakpoints, console_out, kbd_input, status, 
                     key = kbd_input.get()
                     if key == ord('r'):
                         status['mode'] = 'running'
+            if status['reassemble']:
+                status['reassemble'] = False
+                sim.assemble(sys.argv[1][:-4] + ".asm")
             stdout = sim.read()
             if len(stdout) > 0:
                 with locks['console']:
                     console_out.put(stdout)
             if status['restart']:
                 status['restart'] = False
-                sim.set_pc(0x3000)
+                sim.reinit()
+                load_args(sim)
+                running = False
+                status['mode'] = 'break'
             status['pc'] = sim.get_pc()
             status['rti_pc'] = sim.read_mem(0x2ffe)
             new_reg_lines = registers_str(sim)
@@ -229,6 +235,9 @@ def input_handler(stdscr, status, kbd_input, breakpoints, locks, kbdwindow, cons
                 status['mem_locked'] = True
                 status['baseaddr'] += 1
             if key == ord('e'):
+                status['restart'] = True
+            if key == ord('a'):
+                status['reassemble'] = True
                 status['restart'] = True
             if key == ord('b'):
                 status['mode'] = 'set_breakpoint'
@@ -308,7 +317,7 @@ def hotkey_str(status, win_width):
             lockstr = "unlock"
         else:
             lockstr = "lock"
-        retstr = f"s:step-in r:run q:quit b:breakpoints h:hsplit-left g:goto-address"
+        retstr = f"s:step-in r:run q:quit b:breakpoints g:goto-address a:reassemble h:hsplit-left "
         retstr += f"l:hsplit-right e:restart c:clear-console n:{lockstr}-mem-screen k:mem-scroll-up j:mem-scroll-down" 
     elif status['mode'] == 'set_breakpoint':
         retstr = f"Enter address to toggle breakpoint: {status['breakpoint']}"
@@ -328,6 +337,7 @@ def cli_main(stdscr):
     status['rti_pc'] = 0x3000
     status['mem_locked'] = False
     status['restart'] = False
+    status['reassemble'] = False
     status['breakpoint'] = ""
     status['new_baseaddr'] = ""
     breakpoints = []

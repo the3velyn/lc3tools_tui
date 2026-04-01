@@ -23,7 +23,11 @@ class Simulator:
     
     def assemble(self, asmfile, ret_symtab=False):
         if not ret_symtab:
-            return self.asm.assemble(asmfile)[0]
+            asm = self.asm.assemble(asmfile)
+            if asm != None:
+                return asm[0]
+            else:
+                return None
         else:
             return self.asm.assemble(asmfile)
 
@@ -71,3 +75,6 @@ class Simulator:
     
     def randomize(self):
         return self.sim.randomize(int(time.time()))
+
+    def reinit(self):
+        return self.sim.reinit()
