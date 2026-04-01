@@ -48,7 +48,7 @@ def registers_str(sim):
             char = chr(abs(signedval))
         elif val == 0:
             char = "\\0"
-        elif abs(signedval) == 10:
+        elif abs(signedval) == 9:
             char = "\\t"
         elif abs(signedval) == 10:
             char = "\\n"
@@ -98,7 +98,7 @@ def mem_str(maxy, maxx, sim, breakpoints, status):
                 char = chr(abs(signedval))
             elif val == 0:
                 char = "\\0"
-            elif abs(signedval) == 10:
+            elif abs(signedval) == 9:
                 char = "\\t"
             elif abs(signedval) == 10:
                 char = "\\n"
@@ -222,7 +222,8 @@ def input_handler(stdscr, status, kbd_input, breakpoints, locks, kbdwindow):
                 status['mem_locked'] = not status['mem_locked']
             if key == ord('k'):
                 status['mem_locked'] = True
-                status['baseaddr'] -= 1
+                if status['baseaddr'] > 0:
+                    status['baseaddr'] -= 1
             if key == ord('j'):
                 status['mem_locked'] = True
                 status['baseaddr'] += 1
@@ -398,7 +399,7 @@ def cli_main(stdscr):
             if status['pc'] >= 0x3000:
                 status['baseaddr'] = status['pc'] - 3
             else:
-                status['baseaddr'] = status['rti_pc'] - 3
+                status['baseaddr'] = max(0, status['rti_pc'] - 3)
 
         mem_win.erase()
         mem_win.addstr(0,2, " Memory ")
