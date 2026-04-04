@@ -245,6 +245,7 @@ def input_handler(stdscr, status, kbd_input, breakpoints, locks, kbdwindow, cons
                 console.clear()
             if key == ord('g'):
                 status['mode'] = "set_baseaddr"
+                status["new_baseaddr"] = ""
         elif status['mode'] == 'set_breakpoint':
             if key in [10, 13, curses.KEY_ENTER]:
                 with locks['breakpoint']:
@@ -258,25 +259,26 @@ def input_handler(stdscr, status, kbd_input, breakpoints, locks, kbdwindow, cons
                         pass
                 status['breakpoint'] = ""
                 status['mode'] = 'break'
-            if curses.ascii.isascii(key):
+            if curses.ascii.isascii(key) and key != curses.KEY_BACKSPACE and key != curses.ascii.DEL:
                 status['breakpoint'] += chr(key)
-            if key == curses.KEY_BACKSPACE:
+            elif key == curses.KEY_BACKSPACE or key == curses.ascii.DEL:
                 if len(status['breakpoint']) > 0:
                     status['breakpoint'] = status['breakpoint'][:-1]
         elif status['mode'] == 'set_baseaddr':
             if key in [10, 13, curses.KEY_ENTER]:
                 try:
-                    status['mem_locked'] = True
                     status['baseaddr'] = int(status["new_baseaddr"], 16)
-                    status["new_baseaddr"] = ""
-                    status['mode'] = 'break'
+                    status['mem_locked'] = True
                 except:
                     pass
-            if curses.ascii.isascii(key):
+                status["new_baseaddr"] = ""
+                status['mode'] = 'break'
+            if curses.ascii.isascii(key) and key != curses.KEY_BACKSPACE and key != curses.ascii.DEL:
                 status["new_baseaddr"] += chr(key)
-            if key == curses.KEY_BACKSPACE:
-                if len(status['breakpoint']) > 0:
+            elif key == curses.KEY_BACKSPACE or key == curses.ascii.DEL:
+                if len(status['new_baseaddr']) > 0:
                     status["new_baseaddr"] = status["new_baseaddr"][:-1]
+                    
         else:
             kbd_input.put(key)
 
@@ -320,9 +322,9 @@ def hotkey_str(status, win_width):
         retstr = f"s:step-in r:run q:quit b:breakpoints g:goto-address a:reassemble h:hsplit-left "
         retstr += f"l:hsplit-right e:restart c:clear-console n:{lockstr}-mem-screen k:mem-scroll-up j:mem-scroll-down" 
     elif status['mode'] == 'set_breakpoint':
-        retstr = f"Enter address to toggle breakpoint: {status['breakpoint']}"
+        retstr = f"Enter address to toggle breakpoint: " + status['breakpoint']
     elif status['mode'] == 'set_baseaddr':
-        retstr = f"Enter new starting address for memory window: {status["new_baseaddr"]}"
+        retstr = "Enter new starting address for memory window: " + status["new_baseaddr"]
     strwidth = max(5, strwidth)
     retstr = textwrap.wrap(retstr, strwidth, break_long_words=False, break_on_hyphens=False)
     return retstr
