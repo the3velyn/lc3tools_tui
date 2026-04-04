@@ -88,7 +88,7 @@ def mem_str(maxy, maxx, sim, breakpoints, status):
         else:
             line += " "
         line += f"x{i:04X}: "
-        if(".fill" in sim.read_mem_line(i).lower()) or sim.read_mem_line(i) == "":
+        if(".fill" in sim.read_mem_line(i).lower()) or (".blkw" in sim.read_mem_line(i).lower()) or sim.read_mem_line(i) == "":
             val = sim.read_mem(i)
             signedval = val
             if val >= 0x8000:
@@ -108,8 +108,12 @@ def mem_str(maxy, maxx, sim, breakpoints, status):
                 char = f"\'{char}\'"
             if char != "" and signedval < 0:
                 char = "-" + char
-            if (".fill" in sim.read_mem_line(i).lower()):
-                tmp = sim.read_mem_line(i).lower().split(".fill")
+            if (".fill" in sim.read_mem_line(i).lower()) or (".blkw" in sim.read_mem_line(i).lower()):
+                tmp = ""
+                if ".blkw" in sim.read_mem_line(i).lower():
+                    tmp = sim.read_mem_line(i).lower().split(".blkw")
+                elif ".fill" in sim.read_mem_line(i).lower():
+                    tmp = sim.read_mem_line(i).lower().split(".fill")
                 if (len(tmp) > 1):
                     tmp = tmp[0].strip()
                     if len(tmp) > 0:
