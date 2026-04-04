@@ -142,7 +142,7 @@ def display_proc(shm_name, key, run):
             if event.type == pygame.KEYDOWN and event.unicode:
                 # Send the key name or unicode to the curses process
                 key.value = ord(event.unicode)
-        surface = pygame.surfarray.make_surface(image_data.swapaxes(0, 1))
+        surface = pygame.surfarray.make_surface(image_data)
         scaled = pygame.transform.scale(surface, (256, 248))
         screen.blit(scaled, (0, 0))
         pygame.display.flip()
