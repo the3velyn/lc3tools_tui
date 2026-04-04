@@ -34,6 +34,7 @@ def load_args(sim):
                     print(f"{infile} is not an obj file.")
             else:
                 print(f"{infile} is not an obj file.")
+    sim.set_pc(0x3000)
 
 def registers_str(sim):
     lines = []
