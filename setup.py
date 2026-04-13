@@ -17,7 +17,7 @@ import os
 
 compile_args_base = []
 if sys.platform == 'win32':
-    compile_args_base = ['/std:c++17', '/EHsc']
+    compile_args_base = ['/std:c++17', '/EHsc', '/Zc:__cplusplus']
 else:
     compile_args_base = [
         '-Wno-error=format-security',
