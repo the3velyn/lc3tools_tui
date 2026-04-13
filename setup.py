@@ -30,7 +30,7 @@ backend_sources = [
 
 cli_sources = glob.glob("src/cli/*.cpp")
 
-# curs_main.cpp uses ncurses+Qt5 — only compile it into cli_bindings
+# curs_main.cpp uses ncurses+Qt5 — only compile it on Unix
 core_cli_sources = [s for s in cli_sources if "curs_main" not in s]
 
 include_dirs = [
@@ -42,17 +42,29 @@ include_dirs = [
     "src/common",
 ]
 
-# Qt5 flags (for cli_bindings only)
-qt5_cflags = _pkgconfig("--cflags", "Qt5Widgets")
-qt5_libs   = _pkgconfig("--libs",   "Qt5Widgets")
+# --- cli_bindings: platform-specific configuration ---
+cli_compile_args = list(compile_args_base) + ["-DBUILDING_CLI_BINDINGS"]
+cli_include_dirs = list(include_dirs)
+cli_lib_dirs     = []
+cli_libraries    = []
+cli_link_args    = []
+cli_ext_sources  = cli_sources  # all cli/*.cpp including curs_main
 
-# Separate Qt5 lib flags into -L/-l vs linker args
-qt5_lib_dirs  = [f[2:] for f in qt5_libs if f.startswith("-L")]
-qt5_link_libs = [f[2:] for f in qt5_libs if f.startswith("-l")]
-qt5_extra_link = [f for f in qt5_libs if not f.startswith(("-L", "-l"))]
+if sys.platform == 'win32':
+    # Windows: no ncurses or Qt5 — exclude curs_main.cpp
+    cli_ext_sources = core_cli_sources
+else:
+    # Unix: enable curs_main with ncurses + Qt5
+    cli_compile_args.append("-DHAS_CURS_MAIN")
+    cli_libraries.append("ncurses")
 
-# ncurses
-ncurses_lib = "pdcurses" if sys.platform == "win32" else "ncurses"
+    qt5_cflags = _pkgconfig("--cflags", "Qt5Widgets")
+    qt5_libs   = _pkgconfig("--libs",   "Qt5Widgets")
+    cli_include_dirs += [f[2:] for f in qt5_cflags if f.startswith("-I")]
+    cli_compile_args += [f for f in qt5_cflags if not f.startswith("-I")]
+    cli_lib_dirs     += [f[2:] for f in qt5_libs if f.startswith("-L")]
+    cli_libraries    += [f[2:] for f in qt5_libs if f.startswith("-l")]
+    cli_link_args    += [f for f in qt5_libs if not f.startswith(("-L", "-l"))]
 
 ext_modules = [
     Extension(
@@ -65,15 +77,13 @@ ext_modules = [
 
     Extension(
         "lc3py.cli_bindings",
-        sources=["bindings.cpp"] + backend_sources + cli_sources,
-        include_dirs=include_dirs + [f[2:] for f in qt5_cflags if f.startswith("-I")],
+        sources=["bindings.cpp"] + backend_sources + cli_ext_sources,
+        include_dirs=cli_include_dirs,
         language='c++',
-        extra_compile_args=compile_args_base
-            + [f for f in qt5_cflags if not f.startswith("-I")]
-            + ["-DBUILDING_CLI_BINDINGS"],
-        library_dirs=qt5_lib_dirs,
-        libraries=[ncurses_lib] + qt5_link_libs,
-        extra_link_args=qt5_extra_link,
+        extra_compile_args=cli_compile_args,
+        library_dirs=cli_lib_dirs,
+        libraries=cli_libraries,
+        extra_link_args=cli_link_args,
     ),
 ]
 

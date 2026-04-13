@@ -9,7 +9,7 @@ namespace py = pybind11;
 int asm_main(int argc, char ** const argv);
 int sim_main(int argc, char ** const argv);
 
-#ifdef BUILDING_CLI_BINDINGS
+#ifdef HAS_CURS_MAIN
 int curs_main(std::vector<std::string> args, std::string python_exe);
 #endif
 
@@ -92,7 +92,7 @@ PYBIND11_MODULE(cli_bindings, m) {
         return sim_main_py(args);
     });
 
-#ifdef BUILDING_CLI_BINDINGS
+#ifdef HAS_CURS_MAIN
     m.def("curs_main",
         [](std::vector<std::string> args, std::string python_exe) {
             return curs_main(args, python_exe);

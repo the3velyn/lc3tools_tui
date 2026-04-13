@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QTimer>
 #include <QCloseEvent>
+#include <QKeyEvent>
 #include <QCoreApplication>
 
 #include <ncurses.h>
@@ -134,13 +135,6 @@ struct MemViewParams {
     bool mem_locked  = false;
 };
 
-// Raw snapshot of display memory (LC-3 uint16_t values).
-// The sim thread writes here; the display thread reads and converts.
-struct DisplaySnapshot {
-    std::mutex mu;
-    uint16_t data[DISP_W * DISP_H] = {};
-};
-
 struct SimCtrl {
     std::atomic<bool> quit{false};
     std::atomic<bool> run_mode{false};
@@ -156,6 +150,21 @@ struct SimCtrl {
     std::vector<uint16_t> bp_add;
     std::vector<uint16_t> bp_remove;
     std::vector<uint16_t> active_bps;  // maintained by sim thread only
+
+    // Keys forwarded from the Qt display window to the ncurses thread.
+    std::mutex key_mu;
+    std::queue<int> key_queue;
+    void pushKey(int k) {
+        std::lock_guard<std::mutex> lk(key_mu);
+        key_queue.push(k);
+    }
+    int popKey() {
+        std::lock_guard<std::mutex> lk(key_mu);
+        if (key_queue.empty()) return ERR;
+        int k = key_queue.front();
+        key_queue.pop();
+        return k;
+    }
 };
 
 // ============================================================
@@ -185,6 +194,18 @@ protected:
         ctrl_.display_on.store(false, std::memory_order_relaxed);
         hide();
         e->ignore();
+    }
+    void keyPressEvent(QKeyEvent * e) override {
+        int key = -1;
+        // Map Qt keys to the values the ncurses thread expects.
+        if (e->key() == Qt::Key_Escape)     key = 27;
+        else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) key = 10;
+        else if (e->key() == Qt::Key_Backspace) key = 127;
+        else {
+            QString txt = e->text();
+            if (!txt.isEmpty()) key = txt.at(0).unicode();
+        }
+        if (key > 0) ctrl_.pushKey(key);
     }
 
 private:
@@ -353,7 +374,6 @@ static void simThread(
     SimCtrl & ctrl,
     UIData & uid,
     ConsoleState & console,
-    DisplaySnapshot & snap,
     MemViewParams & mvp,
     const std::vector<std::string> & obj_files
 ) {
@@ -422,20 +442,7 @@ static void simThread(
         if (!out.empty()) console.append(out);
     };
 
-    // Snapshot display memory into DisplaySnapshot so the display thread
-    // can convert to RGB concurrently.  Uses rawMemPtr() to skip per-pixel
-    // MMIO checks and pair/shared_ptr construction.
-    auto do_disp_snapshot = [&]() {
-        if (!ctrl.display_on.load(std::memory_order_relaxed)) return;
-        const lc3::core::MemLocation * raw =
-            sim.getMachineState().rawMemPtr(DISP_BASE);
-        std::lock_guard<std::mutex> lk(snap.mu);
-        for (int i = 0; i < DISP_W * DISP_H; i++)
-            snap.data[i] = raw[i].getValue();
-    };
-
     auto last_update = steady_clock::now();
-    auto last_disp   = steady_clock::now();
     bool step_trap   = false;  // step-over mode: run until PC >= 0x3000
 
     while (!ctrl.quit.load(std::memory_order_relaxed)) {
@@ -539,20 +546,15 @@ static void simThread(
             }
             do_ui_update();
         }
-
-        if (now - last_disp >= 16ms) {
-            last_disp = now;
-            do_disp_snapshot();
-        }
     }
 }
 
 // ============================================================
-// Display thread – converts DisplaySnapshot → RGB888 framebuffer
+// Display thread – reads flat_mem directly and converts to RGB888
 // ============================================================
 static void displayThread(
+    lc3::sim & sim,
     SimCtrl & ctrl,
-    DisplaySnapshot & snap,
     DisplayCache & dc
 ) {
     using namespace std::chrono_literals;
@@ -560,32 +562,30 @@ static void displayThread(
     // Shadow copy for dirty-pixel detection so we only rewrite changed pixels.
     uint16_t prev[DISP_W * DISP_H] = {};
 
+    // Pointer into the flat contiguous uint16_t mirror inside MachineState.
+    // Reads are safe without a mutex: each element is a naturally-aligned
+    // uint16_t, so loads are atomic on x86 / ARM / any modern ISA.
+    const uint16_t * flat = sim.getMachineState().flatMemPtr() + DISP_BASE;
+
     while (!ctrl.quit.load(std::memory_order_relaxed)) {
         if (!ctrl.display_on.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(16ms);
             continue;
         }
 
-        // Grab the latest snapshot under its mutex.
-        uint16_t cur[DISP_W * DISP_H];
-        {
-            std::lock_guard<std::mutex> lk(snap.mu);
-            std::memcpy(cur, snap.data, sizeof(cur));
-        }
-
         // Convert only changed pixels to RGB888 and write to the framebuffer.
         {
             std::lock_guard<std::mutex> lk(dc.mu);
             for (int i = 0; i < DISP_W * DISP_H; i++) {
-                if (cur[i] == prev[i]) continue;
-                prev[i] = cur[i];
-                uint16_t d = cur[i];
-                int r5 = (d >> 11) & 0x1F;
-                int g6 = (d >>  5) & 0x3F;
-                int b5 =  d        & 0x1F;
-                dc.fb[i*3 + 0] = (uint8_t)((r5 << 3) | (r5 >> 2));
-                dc.fb[i*3 + 1] = (uint8_t)((g6 << 2) | (g6 >> 4));
-                dc.fb[i*3 + 2] = (uint8_t)((b5 << 3) | (b5 >> 2));
+                uint16_t d = flat[i];
+                if (d == prev[i]) continue;
+                prev[i] = d;
+                int r = (d >> 10) & 0x1F;
+                int g = (d >>  5) & 0x1F;
+                int b =  d        & 0x1F;
+                dc.fb[i*3 + 0] = (uint8_t)(r << 3);
+                dc.fb[i*3 + 1] = (uint8_t)(g << 3);
+                dc.fb[i*3 + 2] = (uint8_t)(b << 3);
             }
         }
 
@@ -721,7 +721,9 @@ static void ncursesThread(
 
     while (!ctrl.quit.load(std::memory_order_relaxed)) {
 
+        // Read from ncurses first, then check the Qt display key queue.
         int key = wgetch(kbd_win);
+        if (key == ERR) key = ctrl.popKey();
 
         bool sim_running = ctrl.run_mode.load(std::memory_order_relaxed);
 
@@ -934,7 +936,6 @@ int curs_main(std::vector<std::string> args, std::string /* python_exe */) {
     SimCtrl         ctrl;
     UIData          uid;
     ConsoleState    console;
-    DisplaySnapshot snap;
     DisplayCache    dc;
     MemViewParams   mvp;
 
@@ -949,15 +950,15 @@ int curs_main(std::vector<std::string> args, std::string /* python_exe */) {
     LC3Display * display = new LC3Display(dc, ctrl);
     (void)display;
 
-    // Sim thread: runs the LC-3 simulator and snapshots display memory
+    // Sim thread: runs the LC-3 simulator (no display work)
     std::thread sim_thr(simThread,
         std::ref(sim), std::ref(printer), std::ref(ctrl),
-        std::ref(uid), std::ref(console), std::ref(snap),
+        std::ref(uid), std::ref(console),
         std::ref(mvp), obj_files);
 
-    // Display thread: converts raw snapshot to RGB and updates dc.fb
+    // Display thread: reads flat_mem directly and converts to RGB
     std::thread disp_thr(displayThread,
-        std::ref(ctrl), std::ref(snap), std::ref(dc));
+        std::ref(sim), std::ref(ctrl), std::ref(dc));
 
     // TUI thread: ncurses rendering and keyboard input
     std::thread ncurses_thr(ncursesThread,

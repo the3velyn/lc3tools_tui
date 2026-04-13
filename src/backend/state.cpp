@@ -24,6 +24,9 @@ void MachineState::reinitialize(void)
     mem.clear();
     mem.resize(USER_END - SYSTEM_START + 1);
 
+    flat_mem.clear();
+    flat_mem.resize(USER_END - SYSTEM_START + 1, 0);
+
     rf.clear();
     rf.resize(16);
 }
@@ -54,6 +57,7 @@ PIMicroOp MachineState::writeMem(uint16_t addr, uint16_t value)
         }
     } else {
         mem[addr].setValue(value);
+        flat_mem[addr] = value;
     }
 
     return nullptr;
