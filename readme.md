@@ -23,6 +23,15 @@ pip3 install --upgrade lc3sim --extra-index-url https://DougTownsend.github.io/l
 You should now be able to use `lc3asm`, `lc3sim`, and `lc3pysim` in your
 terminal.
 
+> **Linux users:** `lc3pysim` requires the Qt5 runtime for its display window.
+> Install it with:
+> - Ubuntu/Debian: `sudo apt install libqt5widgets5`
+> - Fedora: `sudo dnf install qt5-qtbase`
+>
+> `lc3asm` and `lc3sim` work without Qt5.
+
+> **Mac users:** `lc3pysim` requires Qt. Install it with: `brew install qt`
+
 > **Windows users:** Download and run
 > [`lc3tools.msi`](https://github.com/DougTownsend/lc3tools/releases/latest/download/lc3tools.msi)
 > instead. The installer adds `lc3asm`, `lc3sim`, and `lc3pysim` to your PATH

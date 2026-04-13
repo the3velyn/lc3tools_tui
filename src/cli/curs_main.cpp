@@ -14,6 +14,7 @@
 #include <QTimer>
 #include <QCloseEvent>
 #include <QKeyEvent>
+#include <QFileDialog>
 #include <QCoreApplication>
 
 #ifdef _WIN32
@@ -35,10 +36,13 @@
 #include <cstdlib>
 #include <sstream>
 #include <functional>
+#include <filesystem>
+#include <map>
 
 #include "interface.h"
 #include "printer.h"
 #include "inputter.h"
+#include "aliases.h"
 
 // ============================================================
 // Constants
@@ -178,13 +182,36 @@ struct SimCtrl {
     }
 };
 
+// Reverse symbol map: address → label name (built from assembler output)
+using ReverseSymbolMap = std::map<uint16_t, std::string>;
+
+struct FileInfo {
+    std::string path;       // original argument (.asm or .obj)
+    std::string asm_path;   // .asm file (empty if .obj-only)
+    std::string obj_path;   // .obj file
+    std::filesystem::file_time_type last_mtime{};
+};
+
+struct FileManager {
+    std::mutex mu;
+    std::vector<FileInfo> files;
+    ReverseSymbolMap symbols;   // merged from all assemblies
+
+    // Atomic flag: ncurses thread requests a Qt file-open dialog
+    std::atomic<bool> open_dialog_req{false};
+    // Result from the dialog (set by Qt thread, read by sim thread)
+    std::mutex result_mu;
+    std::vector<std::string> open_dialog_result;
+    std::atomic<bool> open_dialog_done{false};
+};
+
 // ============================================================
 // Qt5 Display Window
 // ============================================================
 class LC3Display : public QWidget {
 public:
-    LC3Display(DisplayCache & dc, SimCtrl & ctrl)
-        : QWidget(nullptr), dc_(dc), ctrl_(ctrl)
+    LC3Display(DisplayCache & dc, SimCtrl & ctrl, FileManager & fm)
+        : QWidget(nullptr), dc_(dc), ctrl_(ctrl), fm_(fm)
     {
         setWindowTitle("LC-3 Display");
         setFixedSize(DISP_W * 2, DISP_H * 2);
@@ -222,6 +249,7 @@ protected:
 private:
     DisplayCache & dc_;
     SimCtrl & ctrl_;
+    FileManager & fm_;
     QTimer * timer_;
 
     void tick() {
@@ -231,27 +259,53 @@ private:
         if (on) update();
         if (ctrl_.quit.load(std::memory_order_relaxed))
             QCoreApplication::quit();
+        // Handle file-open dialog request from ncurses thread
+        if (fm_.open_dialog_req.exchange(false)) {
+            QStringList paths = QFileDialog::getOpenFileNames(
+                nullptr, "Open LC-3 Files", QString(),
+                "LC-3 Files (*.asm *.obj);;All Files (*)");
+            {
+                std::lock_guard<std::mutex> lk(fm_.result_mu);
+                fm_.open_dialog_result.clear();
+                for (auto & p : paths)
+                    fm_.open_dialog_result.push_back(p.toStdString());
+            }
+            fm_.open_dialog_done.store(true);
+        }
     }
 };
 
 // ============================================================
 // Register string formatting
 // ============================================================
-static std::string formatRegs(lc3::sim & sim) {
+// Helper: get display string for a value's "char" column.
+// If the value >= 0x3000 and has a label, show the label instead.
+static std::string valCharStr(uint16_t val, const ReverseSymbolMap & syms) {
+    // Check for label first
+    if (val >= 0x3000) {
+        auto it = syms.find(val);
+        if (it != syms.end()) return it->second;
+    }
+    int16_t sval = static_cast<int16_t>(val);
+    int av = sval < 0 ? -sval : sval;
+    std::string ch;
+    if      (av >= 32 && av <= 126) ch = std::string("'") + (char)av + "'";
+    else if (val == 0)  ch = "\\0";
+    else if (av == 9)   ch = "\\t";
+    else if (av == 10)  ch = "\\n";
+    else if (av == 13)  ch = "\\r";
+    if (!ch.empty() && sval < 0) ch = "-" + ch;
+    return ch;
+}
+
+static std::string formatRegs(lc3::sim & sim, const ReverseSymbolMap & syms) {
     std::string out;
     char buf[128];
     out += "Reg\tHex\tuint\tint\tchar\n";
     for (int i = 0; i < 8; i++) {
         uint16_t val  = sim.readReg((uint16_t)i);
         int16_t  sval = static_cast<int16_t>(val);
-        int      av   = sval < 0 ? -sval : sval;
-        std::string ch;
-        if      (av >= 32 && av <= 126) ch = std::string("'") + (char)av + "'";
-        else if (val == 0)  ch = "\\0";
-        else if (av == 9)   ch = "\\t";
-        else if (av == 10)  ch = "\\n";
-        else if (av == 13)  ch = "\\r";
-        if (!ch.empty() && sval < 0) ch = "-" + ch;
+        std::string ch = valCharStr(val, syms);
         snprintf(buf, sizeof(buf), "R%d:\tx%04X\t%u\t%d\t%s\n",
                  i, val, (unsigned)val, (int)sval, ch.c_str());
         out += buf;
@@ -269,7 +323,8 @@ static std::string formatRegs(lc3::sim & sim) {
 // ============================================================
 static std::string formatMem(lc3::sim & sim, int rows, int cols,
                               uint16_t baseaddr,
-                              const std::vector<uint16_t> & bps)
+                              const std::vector<uint16_t> & bps,
+                              const ReverseSymbolMap & syms)
 {
     std::string out;
     char buf[256];
@@ -291,24 +346,43 @@ static std::string formatMem(lc3::sim & sim, int rows, int cols,
         line += buf;
 
         std::string memline = sim.getMemLine(addr);
+
+        // Task 7: Fix stringz label placement. If a .STRINGZ label ended up
+        // on the NULL terminator, check if this addr is the start of a string
+        // by looking at the previous address for context.  If the current
+        // memline has a label and the value is 0 (NULL) and the prior address
+        // has a printable char with no label, this is likely a misplaced label.
+        // In that case, show the data at this address rather than the label-only line.
         std::string ml = memline;
         for (char & c : ml) c = (char)tolower((unsigned char)c);
 
         bool is_fill = ml.find(".fill") != std::string::npos;
         bool is_blkw = ml.find(".blkw") != std::string::npos;
+        bool is_stringz = ml.find(".stringz") != std::string::npos;
         bool is_data = is_fill || is_blkw || memline.empty();
+
+        // For .stringz lines, show the data alongside the instruction line
+        if (is_stringz) {
+            uint16_t val = sim.readMem(addr);
+            int16_t sval = static_cast<int16_t>(val);
+            std::string ch = valCharStr(val, syms);
+            // Extract label from the .stringz line
+            size_t pos = ml.find(".stringz");
+            std::string lbl = memline.substr(0, pos);
+            while (!lbl.empty() && isspace((unsigned char)lbl.back())) lbl.pop_back();
+            if (!lbl.empty()) {
+                line += lbl + " ";
+                while ((int)line.size() < 20) line += ' ';
+            }
+            snprintf(buf, sizeof(buf), "x%04X %u %d %s",
+                     val, (unsigned)val, (int)sval, ch.c_str());
+            line += buf;
+        } else
 
         if (is_data) {
             uint16_t val  = sim.readMem(addr);
             int16_t  sval = static_cast<int16_t>(val);
-            int      av   = sval < 0 ? -sval : sval;
-            std::string ch;
-            if      (av >= 32 && av <= 126) ch = std::string("'") + (char)av + "'";
-            else if (val == 0)  ch = "\\0";
-            else if (av == 9)   ch = "\\t";
-            else if (av == 10)  ch = "\\n";
-            else if (av == 13)  ch = "\\r";
-            if (!ch.empty() && sval < 0) ch = "-" + ch;
+            std::string ch = valCharStr(val, syms);
 
             if (is_fill || is_blkw) {
                 size_t pos = is_blkw ? ml.find(".blkw") : ml.find(".fill");
@@ -348,9 +422,10 @@ static std::string hotkeyStr(UIMode mode, bool mem_locked,
         s = "Input forwarded to LC3 keyboard. Press [Esc] to pause.";
     } else if (mode == UIMode::BREAK) {
         std::string lk = mem_locked ? "unlock" : "lock";
-        s = "s:step-in r:run q:quit b:breakpoints g:goto-address "
-            "a:reassemble h:split-left l:split-right e:restart "
-            "c:clear-console n:" + lk + "-mem k:scroll-up j:scroll-down d:toggle-display";
+        s = "s:step-in S:step-over r:run q:quit b:breakpoints g:goto-address "
+            "a:reassemble o:open-file x:close-file h:split-left l:split-right e:restart "
+            "c:clear-console n:" + lk + "-mem k:scroll-up j:scroll-down "
+            "PgUp/PgDn:console-scroll d:toggle-display";
     } else if (mode == UIMode::SET_BREAKPOINT) {
         s = "Enter address to toggle breakpoint: " + bp_input;
     } else {
@@ -386,7 +461,7 @@ static void simThread(
     UIData & uid,
     ConsoleState & console,
     MemViewParams & mvp,
-    const std::vector<std::string> & obj_files
+    FileManager & fm
 ) {
     using namespace std::chrono;
     using namespace std::chrono_literals;
@@ -399,7 +474,8 @@ static void simThread(
         });
 
     auto load_objs = [&]() {
-        for (auto & f : obj_files) sim.loadObjFile(f);
+        std::lock_guard<std::mutex> lk(fm.mu);
+        for (auto & fi : fm.files) sim.loadObjFile(fi.obj_path);
         sim.writePC(0x3000);
     };
     load_objs();
@@ -440,8 +516,10 @@ static void simThread(
             std::lock_guard<std::mutex> lk(ctrl.bp_mu);
             bps_snap = ctrl.active_bps;
         }
-        std::string regs = formatRegs(sim);
-        std::string mems = formatMem(sim, rows, cols, baseaddr, bps_snap);
+        ReverseSymbolMap syms_snap;
+        { std::lock_guard<std::mutex> lk(fm.mu); syms_snap = fm.symbols; }
+        std::string regs = formatRegs(sim, syms_snap);
+        std::string mems = formatMem(sim, rows, cols, baseaddr, bps_snap, syms_snap);
         {
             std::lock_guard<std::mutex> lk(uid.mu);
             uid.reg_str = std::move(regs);
@@ -459,13 +537,55 @@ static void simThread(
     while (!ctrl.quit.load(std::memory_order_relaxed)) {
 
         // --- Handle one-shot requests ---
-        if (ctrl.reassemble_req.exchange(false)) {
-            for (auto & f : obj_files) {
-                std::string asmf = f.size() >= 4
-                    ? f.substr(0, f.size() - 4) + ".asm" : f + ".asm";
-                lc3::as assembler(printer, 1, false);
-                assembler.assemble(asmf);
+
+        // Handle file-open dialog results from Qt thread
+        if (fm.open_dialog_done.exchange(false)) {
+            std::vector<std::string> new_paths;
+            { std::lock_guard<std::mutex> lk(fm.result_mu); new_paths = fm.open_dialog_result; }
+            for (auto & p : new_paths) {
+                FileInfo fi;
+                fi.path = p;
+                if (p.size() >= 4 && p.substr(p.size()-4) == ".asm") {
+                    fi.asm_path = p;
+                    fi.obj_path = p.substr(0, p.size()-4) + ".obj";
+                    lc3::as assembler(printer, 1, false);
+                    auto result = assembler.assemble(fi.asm_path);
+                    if (result) {
+                        for (auto & [name, addr] : result->second)
+                            fm.symbols[(uint16_t)addr] = name;
+                    }
+                    try { fi.last_mtime = std::filesystem::last_write_time(fi.asm_path); }
+                    catch (...) {}
+                } else {
+                    fi.obj_path = p;
+                }
+                sim.loadObjFile(fi.obj_path);
+                { std::lock_guard<std::mutex> lk(fm.mu); fm.files.push_back(fi); }
             }
+            sim.writePC(0x3000);
+        }
+
+        // Smart reassembly: only reassemble files whose mtime has changed
+        if (ctrl.reassemble_req.exchange(false)) {
+            bool any_assembled = false;
+            std::lock_guard<std::mutex> lk(fm.mu);
+            for (auto & fi : fm.files) {
+                if (fi.asm_path.empty()) continue;
+                try {
+                    auto cur_mtime = std::filesystem::last_write_time(fi.asm_path);
+                    if (cur_mtime == fi.last_mtime) continue;
+                    fi.last_mtime = cur_mtime;
+                } catch (...) { continue; }
+                lc3::as assembler(printer, 1, false);
+                auto result = assembler.assemble(fi.asm_path);
+                if (result) {
+                    any_assembled = true;
+                    for (auto & [name, addr] : result->second)
+                        fm.symbols[(uint16_t)addr] = name;
+                }
+            }
+            if (!any_assembled)
+                console.append("No files have been modified since last assembly.\n");
         }
 
         if (ctrl.restart_req.exchange(false)) {
@@ -612,7 +732,8 @@ static void ncursesThread(
     SimCtrl & ctrl,
     UIData & uid,
     ConsoleState & console,
-    MemViewParams & mvp
+    MemViewParams & mvp,
+    FileManager & fm
 ) {
     using namespace std::chrono_literals;
 
@@ -635,13 +756,15 @@ static void ncursesThread(
 
     int col0w    = 45;
     int hotkey_h = 3;
+    int files_h  = 3;  // "Current Files" window height
 
-    WINDOW * reg_win = newwin(13, col0w, 0, 0);
-    WINDOW * mem_win = newwin(std::max(1, maxy - 13), col0w, 13, 0);
-    WINDOW * hk_win  = newwin(hotkey_h, std::max(1, maxx - col0w), 0, col0w);
-    WINDOW * con_win = newwin(std::max(1, maxy - hotkey_h),
-                              std::max(1, maxx - col0w), hotkey_h, col0w);
-    WINDOW * kbd_win = newwin(1, 1, 0, 0);
+    WINDOW * reg_win  = newwin(13, col0w, 0, 0);
+    WINDOW * mem_win  = newwin(std::max(1, maxy - 13), col0w, 13, 0);
+    WINDOW * files_win = newwin(files_h, std::max(1, maxx - col0w), 0, col0w);
+    WINDOW * hk_win   = newwin(hotkey_h, std::max(1, maxx - col0w), files_h, col0w);
+    WINDOW * con_win  = newwin(std::max(1, maxy - files_h - hotkey_h),
+                               std::max(1, maxx - col0w), files_h + hotkey_h, col0w);
+    WINDOW * kbd_win  = newwin(1, 1, 0, 0);
     nodelay(kbd_win, TRUE);
     keypad(kbd_win, TRUE);
 
@@ -654,10 +777,11 @@ static void ncursesThread(
         mvp.cols = col0w;
     }
 
-    UIMode      mode        = UIMode::BREAK;
+    UIMode      mode           = UIMode::BREAK;
     std::string bp_input;
     std::string addr_input;
-    bool        mem_locked  = false;
+    bool        mem_locked     = false;
+    int         console_scroll = 0;   // 0 = at bottom, >0 = scrolled up N lines
 
     // Resize a window safely: shrink before moving (if shrinking height),
     // move before growing (if growing height).  Always call clearok so the
@@ -681,21 +805,21 @@ static void ncursesThread(
     // Clears stdscr first so no old border fragments linger in the background.
     auto relayout = [&]() {
         int right_w = std::max(1, maxx - col0w);
-        int con_h   = std::max(1, maxy - hotkey_h);
+        int con_h   = std::max(1, maxy - files_h - hotkey_h);
         int mem_h   = std::max(1, maxy - 13);
 
-        // Blank the underlying stdscr so old characters don't show through.
         werase(stdscr);
         wnoutrefresh(stdscr);
 
-        safe_resize(reg_win, 13,       col0w,   0,        0);
-        safe_resize(mem_win, mem_h,    col0w,   13,       0);
-        safe_resize(hk_win,  hotkey_h, right_w, 0,        col0w);
-        safe_resize(con_win, con_h,    right_w, hotkey_h, col0w);
+        safe_resize(reg_win,   13,       col0w,   0,                    0);
+        safe_resize(mem_win,   mem_h,    col0w,   13,                   0);
+        safe_resize(files_win, files_h,  right_w, 0,                    col0w);
+        safe_resize(hk_win,    hotkey_h, right_w, files_h,              col0w);
+        safe_resize(con_win,   con_h,    right_w, files_h + hotkey_h,   col0w);
 
-        // Force every window to repaint its full content, not just changed cells.
         touchwin(reg_win);
         touchwin(mem_win);
+        touchwin(files_win);
         touchwin(hk_win);
         touchwin(con_win);
 
@@ -761,7 +885,10 @@ static void ncursesThread(
                         { std::lock_guard<std::mutex> lk(uid.mu); uid.halted = false; }
                         break;
                     case 's': ctrl.step_in_req.store(true); break;
-                    case 'o': ctrl.step_over_req.store(true); break;
+                    case 'S': ctrl.step_over_req.store(true); break;
+                    case 'o': fm.open_dialog_req.store(true); break;
+                    case KEY_PPAGE: console_scroll += 5; break;
+                    case KEY_NPAGE: console_scroll = std::max(0, console_scroll - 5); break;
                     case 'n':
                         mem_locked = !mem_locked;
                         { std::lock_guard<std::mutex> lk(mvp.mu); mvp.mem_locked = mem_locked; }
@@ -791,6 +918,43 @@ static void ncursesThread(
                         break;
                     case 'b': mode = UIMode::SET_BREAKPOINT; bp_input.clear(); break;
                     case 'c': ctrl.clear_console_req.store(true); break;
+                    case 'x': {
+                        // Close-file popup
+                        std::vector<FileInfo> fsnap;
+                        { std::lock_guard<std::mutex> lk(fm.mu); fsnap = fm.files; }
+                        if (!fsnap.empty()) {
+                            int pw = std::min(maxx - 4, 60);
+                            int ph = std::min(maxy - 4, (int)fsnap.size() + 4);
+                            int py = (maxy - ph) / 2;
+                            int px = (maxx - pw) / 2;
+                            WINDOW * popup = newwin(ph, pw, py, px);
+                            keypad(popup, TRUE);
+                            box(popup, 0, 0);
+                            mvwaddstr(popup, 0, 2, " Select a file to close: ");
+                            for (int fi = 0; fi < (int)fsnap.size() && fi + 1 < ph - 2; fi++) {
+                                std::string label = std::to_string(fi + 1) + ") "
+                                    + std::filesystem::path(fsnap[fi].path).filename().string();
+                                mvwaddnstr(popup, fi + 1, 2, label.c_str(), pw - 4);
+                            }
+                            mvwaddstr(popup, ph - 2, 2, "Press number or Esc to cancel");
+                            wrefresh(popup);
+                            nodelay(popup, FALSE);
+                            int ch = wgetch(popup);
+                            if (ch >= '1' && ch <= '9') {
+                                int idx = ch - '1';
+                                if (idx < (int)fsnap.size()) {
+                                    std::lock_guard<std::mutex> lk(fm.mu);
+                                    if (idx < (int)fm.files.size())
+                                        fm.files.erase(fm.files.begin() + idx);
+                                }
+                                // Reload all remaining files
+                                ctrl.restart_req.store(true);
+                            }
+                            delwin(popup);
+                            relayout();
+                        }
+                        break;
+                    }
                     case 'g': mode = UIMode::SET_BASEADDR; addr_input.clear(); break;
                     case 'd':
                         ctrl.display_on.store(!ctrl.display_on.load(std::memory_order_relaxed));
@@ -868,6 +1032,26 @@ static void ncursesThread(
         }
         wnoutrefresh(mem_win);
 
+        // Current Files
+        {
+            std::vector<FileInfo> fsnap;
+            { std::lock_guard<std::mutex> lk(fm.mu); fsnap = fm.files; }
+            int new_fh = std::max(3, std::min((int)fsnap.size() + 2, 8));
+            if (new_fh != files_h) {
+                files_h = new_fh;
+                relayout();
+            }
+            werase(files_win);
+            box(files_win, 0, 0);
+            mvwaddstr(files_win, 0, 2, " Files ");
+            int fwh, fww; getmaxyx(files_win, fwh, fww);
+            for (int fi = 0; fi < (int)fsnap.size() && fi + 1 < fwh - 1; fi++) {
+                std::string name = std::filesystem::path(fsnap[fi].path).filename().string();
+                mvwaddnstr(files_win, fi + 1, 1, name.c_str(), fww - 2);
+            }
+            wnoutrefresh(files_win);
+        }
+
         // Hotkeys
         {
             std::string hk = hotkeyStr(mode, mem_locked, bp_input, addr_input,
@@ -892,27 +1076,40 @@ static void ncursesThread(
             wnoutrefresh(hk_win);
         }
 
-        // Console
+        // Console (scrollable)
         werase(con_win);
         box(con_win, 0, 0);
-        mvwaddstr(con_win, 0, 2, " Console ");
         {
-            std::deque<std::string> snap;
-            { std::lock_guard<std::mutex> lk(console.mu); snap = console.lines; }
+            std::string title = " Console ";
+            if (console_scroll > 0) title += "[scroll: +" + std::to_string(console_scroll) + "] ";
+            mvwaddstr(con_win, 0, 2, title.c_str());
+        }
+        {
+            std::deque<std::string> csnap;
+            { std::lock_guard<std::mutex> lk(console.mu); csnap = console.lines; }
             int ch, cw; getmaxyx(con_win, ch, cw);
-            int pos = ch - 2;
-            for (auto it = snap.rbegin(); it != snap.rend() && pos >= 1; ++it) {
-                const std::string & line = *it;
-                if (line.empty()) { pos--; continue; }
-                // Simple word-wrap: split into cw-2 chunks
-                int llen = (int)line.size();
-                int wrap = std::max(1, cw - 2);
-                std::vector<std::string> chunks;
-                for (int s = 0; s < llen; s += wrap)
-                    chunks.push_back(line.substr(s, std::min(wrap, llen - s)));
-                for (auto ci = chunks.rbegin(); ci != chunks.rend() && pos >= 1; ++ci)
-                    mvwaddnstr(con_win, pos--, 1, ci->c_str(), cw - 2);
+            int wrap = std::max(1, cw - 2);
+
+            // Build all wrapped lines
+            std::vector<std::string> all_wrapped;
+            for (auto & line : csnap) {
+                if (line.empty()) { all_wrapped.push_back(""); continue; }
+                for (int s = 0; s < (int)line.size(); s += wrap)
+                    all_wrapped.push_back(line.substr(s, std::min(wrap, (int)line.size() - s)));
             }
+
+            // Clamp scroll to valid range
+            int visible = ch - 2;
+            int max_scroll = std::max(0, (int)all_wrapped.size() - visible);
+            console_scroll = std::min(console_scroll, max_scroll);
+
+            // If scrolled to bottom, stay there when new text arrives
+            int start = (int)all_wrapped.size() - visible - console_scroll;
+            if (start < 0) start = 0;
+
+            int row = 1;
+            for (int wi = start; wi < (int)all_wrapped.size() && row < ch - 1; wi++)
+                mvwaddnstr(con_win, row++, 1, all_wrapped[wi].c_str(), cw - 2);
         }
         wnoutrefresh(con_win);
 
@@ -926,6 +1123,7 @@ static void ncursesThread(
 
     delwin(reg_win);
     delwin(mem_win);
+    delwin(files_win);
     delwin(hk_win);
     delwin(con_win);
     delwin(kbd_win);
@@ -936,13 +1134,6 @@ static void ncursesThread(
 // Entry point
 // ============================================================
 int curs_main(std::vector<std::string> args, std::string /* python_exe */) {
-    std::vector<std::string> obj_files;
-    for (size_t i = 1; i < args.size(); i++) {
-        const auto & a = args[i];
-        if (a.size() >= 4 && a.substr(a.size() - 4) == ".obj")
-            obj_files.push_back(a);
-    }
-
     // Shared state
     CursePrinter    printer;
     CurseInputter   inputter;
@@ -951,6 +1142,35 @@ int curs_main(std::vector<std::string> args, std::string /* python_exe */) {
     ConsoleState    console;
     DisplayCache    dc;
     MemViewParams   mvp;
+    FileManager     fm;
+
+    // Parse arguments: accept both .asm and .obj files
+    for (size_t i = 1; i < args.size(); i++) {
+        const auto & a = args[i];
+        FileInfo fi;
+        fi.path = a;
+        if (a.size() >= 4 && a.substr(a.size()-4) == ".asm") {
+            fi.asm_path = a;
+            fi.obj_path = a.substr(0, a.size()-4) + ".obj";
+            // Assemble on startup
+            lc3::as assembler(printer, 1, false);
+            auto result = assembler.assemble(fi.asm_path);
+            if (result) {
+                for (auto & [name, addr] : result->second)
+                    fm.symbols[(uint16_t)addr] = name;
+            }
+            try { fi.last_mtime = std::filesystem::last_write_time(fi.asm_path); }
+            catch (...) {}
+        } else if (a.size() >= 4 && a.substr(a.size()-4) == ".obj") {
+            fi.obj_path = a;
+        } else {
+            continue;  // skip unrecognized args
+        }
+        fm.files.push_back(fi);
+    }
+    // Print assembler output to console
+    std::string asm_output = printer.drain();
+    if (!asm_output.empty()) console.append(asm_output);
 
     // Simulator (must exist before threads start)
     lc3::sim sim(printer, inputter, 1);
@@ -960,14 +1180,15 @@ int curs_main(std::vector<std::string> args, std::string /* python_exe */) {
     char   prog_name[] = "lc3pysim";
     char * fake_argv[] = {prog_name, nullptr};
     QApplication app(fake_argc, fake_argv);
-    LC3Display * display = new LC3Display(dc, ctrl);
+    app.setQuitOnLastWindowClosed(false);
+    LC3Display * display = new LC3Display(dc, ctrl, fm);
     (void)display;
 
     // Sim thread: runs the LC-3 simulator (no display work)
     std::thread sim_thr(simThread,
         std::ref(sim), std::ref(printer), std::ref(ctrl),
         std::ref(uid), std::ref(console),
-        std::ref(mvp), obj_files);
+        std::ref(mvp), std::ref(fm));
 
     // Display thread: reads flat_mem directly and converts to RGB
     std::thread disp_thr(displayThread,
@@ -976,7 +1197,7 @@ int curs_main(std::vector<std::string> args, std::string /* python_exe */) {
     // TUI thread: ncurses rendering and keyboard input
     std::thread ncurses_thr(ncursesThread,
         std::ref(inputter), std::ref(ctrl), std::ref(uid),
-        std::ref(console), std::ref(mvp));
+        std::ref(console), std::ref(mvp), std::ref(fm));
 
     app.exec();          // blocks until QCoreApplication::quit()
 

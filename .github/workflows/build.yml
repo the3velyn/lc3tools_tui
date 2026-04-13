@@ -47,21 +47,24 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
 
-          # Inject Qt platform plugins into the wheel before repair.
-          # auditwheel/delocate bundle linked .so/.dylib files but not
-          # Qt plugins (which are loaded by path at runtime).
+          # Don't bundle Qt shared libraries — they have deep plugin
+          # dependencies (xcb, cocoa) that are impractical to ship in a wheel.
+          # The wheel requires the system Qt runtime at execution time.
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
-            python3 -c "import zipfile,sys; zf=zipfile.ZipFile(sys.argv[1],'a'); zf.write(sys.argv[2],sys.argv[3]); zf.close()"
-            {wheel} /usr/lib64/qt5/plugins/platforms/libqxcb.so lc3py/qt_plugins/platforms/libqxcb.so &&
             auditwheel repair -w {dest_dir} {wheel}
+            --exclude libQt5Core.so.5
+            --exclude libQt5Gui.so.5
+            --exclude libQt5Widgets.so.5
 
           CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
-            PLUGIN=$(find "$(brew --prefix qt)" -name libqcocoa.dylib -path "*/platforms/*" 2>/dev/null | head -1) &&
-            if [ -n "$PLUGIN" ]; then
-            python3 -c "import zipfile,sys; zf=zipfile.ZipFile(sys.argv[1],'a'); zf.write(sys.argv[2],sys.argv[3]); zf.close()"
-            {wheel} "$PLUGIN" lc3py/qt_plugins/platforms/libqcocoa.dylib;
-            fi &&
-            delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}
+            delocate-wheel --require-archs {delocate_archs} -w {dest_dir}
+            --exclude libQt5Core
+            --exclude libQt5Gui
+            --exclude libQt5Widgets
+            --exclude QtCore
+            --exclude QtGui
+            --exclude QtWidgets
+            {wheel}
 
       - uses: actions/upload-artifact@v4
         with:
