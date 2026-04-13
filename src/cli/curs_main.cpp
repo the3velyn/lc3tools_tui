@@ -737,7 +737,25 @@ static void ncursesThread(
 ) {
     using namespace std::chrono_literals;
 
-    initscr();
+    // Ensure ncurses can find the terminfo database regardless of how
+    // the library was compiled or where the binary is run from.
+    if (!getenv("TERMINFO")) {
+        for (auto * p : {"/usr/share/terminfo", "/lib/terminfo",
+                         "/usr/lib/terminfo", "/etc/terminfo"}) {
+            if (std::filesystem::is_directory(p)) {
+                setenv("TERMINFO", p, 0);
+                break;
+            }
+        }
+    }
+    if (!getenv("TERM")) setenv("TERM", "xterm", 0);
+
+    if (!initscr()) {
+        fprintf(stderr, "Failed to initialize terminal. Try: export TERM=xterm\n");
+        ctrl.quit.store(true);
+        QCoreApplication::quit();
+        return;
+    }
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
