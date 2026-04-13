@@ -1,0 +1,171 @@
+name: Build and release
+
+on:
+  push:
+    tags: ["v*"]          # build + release on version tags (e.g. v0.1.0)
+  workflow_dispatch:       # manual trigger for testing
+
+jobs:
+  # ── Linux / macOS wheels ──────────────────────────────────
+  build-wheels:
+    name: Wheel · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-13, macos-14]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel==2.21.3
+
+      - name: Build wheels
+        run: cibuildwheel --output-dir wheelhouse
+        env:
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-musllinux*"
+
+          CIBW_BEFORE_ALL_LINUX: >
+            dnf install -y qt5-qtbase-devel ncurses-devel pkgconf-pkg-config
+
+          CIBW_BEFORE_ALL_MACOS: >
+            brew install qt@5 pkg-config
+
+          CIBW_ENVIRONMENT_MACOS: >
+            PKG_CONFIG_PATH="$(brew --prefix qt@5)/lib/pkgconfig"
+
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+            auditwheel repair -w {dest_dir} {wheel}
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
+            delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  # ── Windows MSI installer ────────────────────────────────
+  build-msi:
+    name: MSI · Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build and install lc3py
+        run: pip install .
+
+      - name: Freeze executables with PyInstaller
+        run: |
+          pip install pyinstaller
+          pyinstaller --onefile --console --name lc3asm --distpath dist\lc3asm installer\lc3asm_main.py
+          pyinstaller --onefile --console --name lc3sim --distpath dist\lc3sim installer\lc3sim_main.py
+
+      - name: Install WiX v5
+        run: dotnet tool install --global wix
+
+      - name: Build MSI
+        run: wix build -o lc3tools.msi installer\lc3tools.wxs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msi-windows
+          path: lc3tools.msi
+
+  # ── GitHub Release ────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [build-wheels, build-msi]
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.msi
+          generate_release_notes: true
+
+  # ── GitHub Pages package index ────────────────────────────
+  update-index:
+    name: Update package index
+    needs: [release]
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+        continue-on-error: true
+
+      - name: Create gh-pages branch if needed
+        run: |
+          if ! git rev-parse --verify gh-pages 2>/dev/null; then
+            git checkout --orphan gh-pages
+            git rm -rf . 2>/dev/null || true
+            git commit --allow-empty -m "init gh-pages"
+          fi
+
+      - name: Generate PEP 503 index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p simple/lc3py
+
+          WHEELS=$(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | while read tag; do
+            gh release view "$tag" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep '\.whl$' || true
+          done | sort -u)
+
+          {
+            echo '<!DOCTYPE html><html><body>'
+            for whl in $WHEELS; do
+              TAG=$(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | while read t; do
+                gh release view "$t" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$whl" && echo "$t" && break
+              done)
+              URL="https://github.com/${REPO}/releases/download/${TAG}/${whl}"
+              echo "<a href=\"${URL}\">${whl}</a><br>"
+            done
+            echo '</body></html>'
+          } > simple/lc3py/index.html
+
+          {
+            echo '<!DOCTYPE html><html><body>'
+            echo '<a href="lc3py/">lc3py</a>'
+            echo '</body></html>'
+          } > simple/index.html
+
+      - name: Deploy to GitHub Pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add simple/
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update package index for ${{ github.ref_name }}"
+          git push origin gh-pages
