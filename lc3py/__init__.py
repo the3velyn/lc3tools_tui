@@ -1,3 +1,11 @@
+import os as _os
+
+# Point Qt at bundled platform plugins (xcb on Linux, cocoa on macOS)
+# so the pre-built wheel works without a system Qt installation.
+_qt_plugins = _os.path.join(_os.path.dirname(__file__), 'qt_plugins')
+if _os.path.isdir(_qt_plugins):
+    _os.environ.setdefault('QT_PLUGIN_PATH', _qt_plugins)
+
 from .core import Simulator as _Simulator, Assembler, Printer, Inputter
 import time
 

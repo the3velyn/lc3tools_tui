@@ -40,8 +40,6 @@ jobs:
           CIBW_BEFORE_ALL_MACOS: "brew install qt pkg-config"
 
           # Set deployment target to 14.0 — Homebrew's Qt6 dylibs require it.
-          # delocate rejects wheels whose deployment target is lower than any
-          # bundled dylib's minimum, so this must match.
           CIBW_ENVIRONMENT_MACOS: >-
             PKG_CONFIG_PATH=$(brew --prefix qt)/lib/pkgconfig
             MACOSX_DEPLOYMENT_TARGET=14.0
@@ -49,8 +47,34 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
 
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}"
+          # Inject Qt platform plugins into the wheel before repair.
+          # auditwheel/delocate bundle linked .so/.dylib files but not
+          # Qt plugins (which are loaded by path at runtime).
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            pip install wheel-filename &&
+            python -c "
+            import subprocess, glob, shutil, os, tempfile, zipfile
+            wheel = '{wheel}'
+            tmp = tempfile.mkdtemp()
+            with zipfile.ZipFile(wheel, 'a') as zf:
+                for src in glob.glob('/usr/lib64/qt5/plugins/platforms/libqxcb.so'):
+                    zf.write(src, f'lc3py/qt_plugins/platforms/{os.path.basename(src)}')
+            " &&
+            auditwheel repair -w {dest_dir} {wheel}
+
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
+            python -c "
+            import subprocess, glob, os, zipfile
+            wheel = '{wheel}'
+            brew_qt = subprocess.check_output(['brew', '--prefix', 'qt']).decode().strip()
+            plugin = os.path.join(brew_qt, 'share/qt/plugins/platforms/libqcocoa.dylib')
+            if not os.path.exists(plugin):
+                plugin = os.path.join(brew_qt, 'plugins/platforms/libqcocoa.dylib')
+            if os.path.exists(plugin):
+                with zipfile.ZipFile(wheel, 'a') as zf:
+                    zf.write(plugin, f'lc3py/qt_plugins/platforms/{os.path.basename(plugin)}')
+            " &&
+            delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}
 
       - uses: actions/upload-artifact@v4
         with:
