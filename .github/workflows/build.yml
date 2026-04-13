@@ -111,6 +111,7 @@ jobs:
           pyinstaller --onefile --console --name lc3sim --distpath $dst\lc3sim $src\lc3sim_main.py
           pyinstaller --onefile --console --name lc3pysim --distpath $dst\lc3pysim `
             --hidden-import lc3py.cli_bindings `
+            --runtime-hook $src\pyinstaller_qt_hook.py `
             --add-binary "$qt\Qt5Core.dll;." `
             --add-binary "$qt\Qt5Gui.dll;." `
             --add-binary "$qt\Qt5Widgets.dll;." `
