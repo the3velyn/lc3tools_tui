@@ -101,11 +101,21 @@ jobs:
       - name: Freeze executables with PyInstaller
         working-directory: ${{ runner.temp }}
         run: |
+          $env:PATH = "$env:QT_ROOT_DIR\bin;$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin;$env:PATH"
           pip install pyinstaller
           $src = "${{ github.workspace }}\installer"
-          pyinstaller --onefile --console --name lc3asm --distpath ${{ github.workspace }}\dist\lc3asm $src\lc3asm_main.py
-          pyinstaller --onefile --console --name lc3sim --distpath ${{ github.workspace }}\dist\lc3sim $src\lc3sim_main.py
-          pyinstaller --onefile --console --name lc3pysim --distpath ${{ github.workspace }}\dist\lc3pysim $src\lc3pysim_main.py
+          $dst = "${{ github.workspace }}\dist"
+          $qt  = "$env:QT_ROOT_DIR\bin"
+          $vbin = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin"
+          pyinstaller --onefile --console --name lc3asm --distpath $dst\lc3asm $src\lc3asm_main.py
+          pyinstaller --onefile --console --name lc3sim --distpath $dst\lc3sim $src\lc3sim_main.py
+          pyinstaller --onefile --console --name lc3pysim --distpath $dst\lc3pysim `
+            --hidden-import lc3py.cli_bindings `
+            --add-binary "$qt\Qt5Core.dll;." `
+            --add-binary "$qt\Qt5Gui.dll;." `
+            --add-binary "$qt\Qt5Widgets.dll;." `
+            --add-binary "$env:QT_ROOT_DIR\plugins\platforms\qwindows.dll;platforms" `
+            $src\lc3pysim_main.py
 
       - name: Install WiX v4
         run: dotnet tool install --global wix --version 4.0.6
