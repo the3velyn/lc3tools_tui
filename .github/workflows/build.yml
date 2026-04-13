@@ -13,7 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14, macos-15]
+        os: [ubuntu-22.04, macos-14]
+        # macos-14 = Apple Silicon (arm64).
+        # Intel Mac and Windows ARM wheels are not built — those users
+        # should build from source (see README).
 
     steps:
       - uses: actions/checkout@v4
@@ -28,14 +31,20 @@ jobs:
       - name: Build wheels
         run: cibuildwheel --output-dir wheelhouse
         env:
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          # Python 3.10–3.13 (3.9 is EOL)
+          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*-musllinux*"
 
           CIBW_BEFORE_ALL_LINUX: "yum install -y qt5-qtbase-devel ncurses-devel pkgconfig"
 
           CIBW_BEFORE_ALL_MACOS: "brew install qt pkg-config"
 
-          CIBW_ENVIRONMENT_MACOS: "PKG_CONFIG_PATH=$(brew --prefix qt)/lib/pkgconfig"
+          # Set deployment target to 14.0 — Homebrew's Qt6 dylibs require it.
+          # delocate rejects wheels whose deployment target is lower than any
+          # bundled dylib's minimum, so this must match.
+          CIBW_ENVIRONMENT_MACOS: >-
+            PKG_CONFIG_PATH=$(brew --prefix qt)/lib/pkgconfig
+            MACOSX_DEPLOYMENT_TARGET=14.0
 
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28

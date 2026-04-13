@@ -27,6 +27,9 @@ terminal.
 > [latest release](https://github.com/DougTownsend/lc3tools/releases/latest)
 > instead. The installer adds `lc3asm`, `lc3sim`, and `lc3pysim` to your PATH
 > automatically. You may need to close and reopen PowerShell after installing.
+> If you previously installed lc3tools with pip, uninstall it first to avoid
+> conflicts: `pip3 uninstall lc3py`
+>
 > If you need to build from source, see the [Windows](#windows) section below.
 
 ---
