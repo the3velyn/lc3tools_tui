@@ -23,8 +23,8 @@ pip3 install --upgrade lc3sim --extra-index-url https://DougTownsend.github.io/l
 You should now be able to use `lc3asm`, `lc3sim`, and `lc3pysim` in your
 terminal.
 
-> **Windows users:** Download and run `lc3tools.msi` from the
-> [latest release](https://github.com/DougTownsend/lc3tools/releases/latest)
+> **Windows users:** Download and run
+> [`lc3tools.msi`](https://github.com/DougTownsend/lc3tools/releases/latest/download/lc3tools.msi)
 > instead. The installer adds `lc3asm`, `lc3sim`, and `lc3pysim` to your PATH
 > automatically. You may need to close and reopen PowerShell after installing.
 > If you previously installed lc3tools with pip, uninstall it first to avoid
