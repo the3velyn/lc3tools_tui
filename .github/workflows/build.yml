@@ -93,29 +93,31 @@ jobs:
         run: pip install . -v
 
       - name: Verify installation
+        working-directory: ${{ runner.temp }}
         run: |
-          pip show -f lc3py
-          python -c "import site, os; [print(f'{p}: {os.listdir(os.path.join(p, \"lc3py\"))}') for p in site.getsitepackages() if os.path.isdir(os.path.join(p, 'lc3py'))]"
           python -c "import lc3py; print('lc3py OK:', lc3py.__file__)"
           python -c "from lc3py.cli_bindings import curs_main; print('curs_main OK')"
 
       - name: Freeze executables with PyInstaller
+        working-directory: ${{ runner.temp }}
         run: |
           pip install pyinstaller
-          pyinstaller --onefile --console --name lc3asm --distpath dist\lc3asm installer\lc3asm_main.py
-          pyinstaller --onefile --console --name lc3sim --distpath dist\lc3sim installer\lc3sim_main.py
-          pyinstaller --onefile --console --name lc3pysim --distpath dist\lc3pysim installer\lc3pysim_main.py
+          $src = "${{ github.workspace }}\installer"
+          pyinstaller --onefile --console --name lc3asm --distpath ${{ github.workspace }}\dist\lc3asm $src\lc3asm_main.py
+          pyinstaller --onefile --console --name lc3sim --distpath ${{ github.workspace }}\dist\lc3sim $src\lc3sim_main.py
+          pyinstaller --onefile --console --name lc3pysim --distpath ${{ github.workspace }}\dist\lc3pysim $src\lc3pysim_main.py
 
       - name: Install WiX v4
         run: dotnet tool install --global wix --version 4.0.6
 
       - name: Build MSI
+        working-directory: ${{ github.workspace }}
         run: wix build -o lc3tools.msi installer\lc3tools.wxs
 
       - uses: actions/upload-artifact@v4
         with:
           name: msi-windows
-          path: lc3tools.msi
+          path: ${{ github.workspace }}\lc3tools.msi
 
   # ── GitHub Release ────────────────────────────────────────
   release:
