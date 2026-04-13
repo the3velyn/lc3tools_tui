@@ -50,8 +50,8 @@ jobs:
           # Inject Qt platform plugins into the wheel before repair.
           # auditwheel/delocate bundle linked .so/.dylib files but not
           # Qt plugins (which are loaded by path at runtime).
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "bash {project}/installer/repair_wheel_linux.sh {wheel} {dest_dir}"
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: "bash {project}/installer/repair_wheel_macos.sh {wheel} {dest_dir} {delocate_archs}"
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "bash {package}/installer/repair_wheel_linux.sh {wheel} {dest_dir}"
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: "bash {package}/installer/repair_wheel_macos.sh {wheel} {dest_dir} {delocate_archs}"
 
       - uses: actions/upload-artifact@v4
         with:
