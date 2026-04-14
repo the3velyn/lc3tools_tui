@@ -521,15 +521,6 @@ static void simThread(
     auto last_update = steady_clock::now();
     bool step_trap   = false;  // step-over mode: run until PC >= 0x3000
 
-    // PRE_INST callback: when step_trap is active, interrupt the sim
-    // the instant PC returns to user code (>= 0x3000).  This fires on
-    // every instruction but only does a bool check + comparison.
-    sim.registerCallback(lc3::core::CallbackType::PRE_INST,
-        [&step_trap](lc3::core::CallbackType, lc3::sim & s) {
-            if (step_trap && s.readPC() >= 0x3000)
-                s.asyncInterrupt();
-        });
-
     while (!ctrl.quit.load(std::memory_order_relaxed)) {
 
         // --- Handle one-shot requests ---
@@ -606,35 +597,31 @@ static void simThread(
         { std::lock_guard<std::mutex> lk(uid.mu); halted = uid.halted; }
 
         // --- Simulation step ---
-        if (running && !halted) {
+        if (step_trap) {
+            // Step-over TRAP mode: step one instruction at a time until
+            // PC returns to user code (>= 0x3000).  This matches the
+            // original Python behavior and ensures we break at exactly
+            // the instruction after the TRAP.
+            sim.stepIn();
+            if (sim.readPC() >= 0x3000) {
+                step_trap = false;
+                ctrl.run_mode.store(false, std::memory_order_release);
+                { std::lock_guard<std::mutex> lk(uid.mu); uid.running = false; }
+            }
+
+        } else if (running && !halted) {
             sim.setRunInstLimit(RUN_SLICE);
             sim.run();
 
             if (!sim.didExceedInstLimit()) {
-                // Stopped before reaching the instruction limit.
                 bool bp = ctrl.bp_hit.exchange(false);
-                if (step_trap && sim.readPC() >= 0x3000) {
-                    // PRE_INST callback fired: TRAP returned to user code.
-                    step_trap = false;
-                    ctrl.run_mode.store(false, std::memory_order_release);
-                    { std::lock_guard<std::mutex> lk(uid.mu); uid.running = false; }
-                } else if (bp) {
-                    // User breakpoint hit.
-                    step_trap = false;
-                    ctrl.run_mode.store(false, std::memory_order_release);
-                    { std::lock_guard<std::mutex> lk(uid.mu); uid.running = false; }
-                } else {
-                    // No breakpoint, no step_trap → HALT.
-                    step_trap = false;
-                    ctrl.run_mode.store(false, std::memory_order_release);
-                    {
-                        std::lock_guard<std::mutex> lk(uid.mu);
-                        uid.halted  = true;
-                        uid.running = false;
-                    }
+                ctrl.run_mode.store(false, std::memory_order_release);
+                {
+                    std::lock_guard<std::mutex> lk(uid.mu);
+                    uid.halted  = !bp;   // not a breakpoint → HALT
+                    uid.running = false;
                 }
             } else {
-                // Full slice completed – clear any stray bp_hit
                 ctrl.bp_hit.store(false, std::memory_order_relaxed);
             }
 
@@ -644,7 +631,8 @@ static void simThread(
             uint16_t instr = sim.readMem(pc);
             bool is_trap   = (instr >> 12) == 0xF;
             if ((is_trap || pc < 0x3000) && instr != 0xF025) {
-                // Enter the trap/OS routine, then run until back in user code
+                // Enter the trap/OS routine, then run until back in user code.
+                // run_mode stays true so ncurses forwards keyboard input.
                 sim.stepIn();
                 step_trap = true;
                 ctrl.run_mode.store(true, std::memory_order_release);
@@ -1056,11 +1044,34 @@ static void ncursesThread(
         }
         wnoutrefresh(mem_win);
 
-        // Current Files
+        // Current Files (side by side, wrapping)
         {
             std::vector<FileInfo> fsnap;
             { std::lock_guard<std::mutex> lk(fm.mu); fsnap = fm.files; }
-            int new_fh = std::max(3, std::min((int)fsnap.size() + 2, 8));
+
+            // Build a list of filenames
+            std::vector<std::string> names;
+            for (auto & fi : fsnap)
+                names.push_back(std::filesystem::path(fi.path).filename().string());
+
+            // Lay out names side by side with 2-char gap, wrapping to new rows
+            int fww = std::max(1, maxx - col0w);
+            int inner_w = fww - 2;  // inside the box
+            std::vector<std::string> rows;
+            std::string cur_row;
+            for (auto & n : names) {
+                if (cur_row.empty()) {
+                    cur_row = n;
+                } else if ((int)(cur_row.size() + 2 + n.size()) <= inner_w) {
+                    cur_row += "  " + n;
+                } else {
+                    rows.push_back(cur_row);
+                    cur_row = n;
+                }
+            }
+            if (!cur_row.empty()) rows.push_back(cur_row);
+
+            int new_fh = std::max(3, (int)rows.size() + 2);
             if (new_fh != files_h) {
                 files_h = new_fh;
                 relayout();
@@ -1068,11 +1079,10 @@ static void ncursesThread(
             werase(files_win);
             box(files_win, 0, 0);
             mvwaddstr(files_win, 0, 2, " Files ");
-            int fwh, fww; getmaxyx(files_win, fwh, fww);
-            for (int fi = 0; fi < (int)fsnap.size() && fi + 1 < fwh - 1; fi++) {
-                std::string name = std::filesystem::path(fsnap[fi].path).filename().string();
-                mvwaddnstr(files_win, fi + 1, 1, name.c_str(), fww - 2);
-            }
+            int fwh_actual; int fww_actual;
+            getmaxyx(files_win, fwh_actual, fww_actual);
+            for (int ri = 0; ri < (int)rows.size() && ri + 1 < fwh_actual - 1; ri++)
+                mvwaddnstr(files_win, ri + 1, 1, rows[ri].c_str(), fww_actual - 2);
             wnoutrefresh(files_win);
         }
 
