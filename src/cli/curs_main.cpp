@@ -279,7 +279,9 @@ private:
 // Register string formatting
 // ============================================================
 // Helper: get display string for a value's "char" column.
-// If the value >= 0x3000 and has a label, show the label instead.
+// If the value >= 0x3000 and has a label, show the label.
+// Otherwise show printable chars in single quotes, whitespace as escapes,
+// and nothing for non-printable non-whitespace.
 static std::string valCharStr(uint16_t val, const ReverseSymbolMap & syms) {
     // Check for label first
     if (val >= 0x3000) {
@@ -290,10 +292,11 @@ static std::string valCharStr(uint16_t val, const ReverseSymbolMap & syms) {
     int av = sval < 0 ? -sval : sval;
     std::string ch;
     if      (av >= 32 && av <= 126) ch = std::string("'") + (char)av + "'";
-    else if (val == 0)  ch = "\\0";
-    else if (av == 9)   ch = "\\t";
-    else if (av == 10)  ch = "\\n";
-    else if (av == 13)  ch = "\\r";
+    else if (val == 0)  ch = "'\\0'";
+    else if (av == 9)   ch = "'\\t'";
+    else if (av == 10)  ch = "'\\n'";
+    else if (av == 13)  ch = "'\\r'";
+    // else: non-printable, non-whitespace → return empty
     if (!ch.empty() && sval < 0) ch = "-" + ch;
     return ch;
 }
@@ -346,45 +349,29 @@ static std::string formatMem(lc3::sim & sim, int rows, int cols,
         line += buf;
 
         std::string memline = sim.getMemLine(addr);
-
-        // Task 7: Fix stringz label placement. If a .STRINGZ label ended up
-        // on the NULL terminator, check if this addr is the start of a string
-        // by looking at the previous address for context.  If the current
-        // memline has a label and the value is 0 (NULL) and the prior address
-        // has a printable char with no label, this is likely a misplaced label.
-        // In that case, show the data at this address rather than the label-only line.
         std::string ml = memline;
         for (char & c : ml) c = (char)tolower((unsigned char)c);
 
-        bool is_fill = ml.find(".fill") != std::string::npos;
-        bool is_blkw = ml.find(".blkw") != std::string::npos;
+        bool is_fill    = ml.find(".fill") != std::string::npos;
+        bool is_blkw    = ml.find(".blkw") != std::string::npos;
         bool is_stringz = ml.find(".stringz") != std::string::npos;
-        bool is_data = is_fill || is_blkw || memline.empty();
-
-        // For .stringz lines, show the data alongside the instruction line
-        if (is_stringz) {
-            uint16_t val = sim.readMem(addr);
-            int16_t sval = static_cast<int16_t>(val);
-            std::string ch = valCharStr(val, syms);
-            // Extract label from the .stringz line
-            size_t pos = ml.find(".stringz");
-            std::string lbl = memline.substr(0, pos);
-            while (!lbl.empty() && isspace((unsigned char)lbl.back())) lbl.pop_back();
-            if (!lbl.empty()) {
-                line += lbl + " ";
-                while ((int)line.size() < 20) line += ' ';
-            }
-            snprintf(buf, sizeof(buf), "x%04X %u %d %s",
-                     val, (unsigned)val, (int)sval, ch.c_str());
-            line += buf;
-        } else
+        // Treat .stringz lines, single-char memlines (string body), and
+        // empty memlines (NULL terminator) as data so runtime values show.
+        bool is_data = is_fill || is_blkw || is_stringz
+                       || memline.empty() || memline.size() == 1;
 
         if (is_data) {
             uint16_t val  = sim.readMem(addr);
             int16_t  sval = static_cast<int16_t>(val);
             std::string ch = valCharStr(val, syms);
 
-            if (is_fill || is_blkw) {
+            // Show label from the symbol map (authoritative source)
+            auto sym_it = syms.find(addr);
+            if (sym_it != syms.end()) {
+                line += sym_it->second + " ";
+                while ((int)line.size() < 20) line += ' ';
+            } else if (is_fill || is_blkw) {
+                // Fallback: extract label from memline for .fill/.blkw
                 size_t pos = is_blkw ? ml.find(".blkw") : ml.find(".fill");
                 std::string lbl = memline.substr(0, pos);
                 while (!lbl.empty() && isspace((unsigned char)lbl.back())) lbl.pop_back();
@@ -534,6 +521,15 @@ static void simThread(
     auto last_update = steady_clock::now();
     bool step_trap   = false;  // step-over mode: run until PC >= 0x3000
 
+    // PRE_INST callback: when step_trap is active, interrupt the sim
+    // the instant PC returns to user code (>= 0x3000).  This fires on
+    // every instruction but only does a bool check + comparison.
+    sim.registerCallback(lc3::core::CallbackType::PRE_INST,
+        [&step_trap](lc3::core::CallbackType, lc3::sim & s) {
+            if (step_trap && s.readPC() >= 0x3000)
+                s.asyncInterrupt();
+        });
+
     while (!ctrl.quit.load(std::memory_order_relaxed)) {
 
         // --- Handle one-shot requests ---
@@ -615,31 +611,34 @@ static void simThread(
             sim.run();
 
             if (!sim.didExceedInstLimit()) {
-                // Stopped before reaching the instruction limit
+                // Stopped before reaching the instruction limit.
                 bool bp = ctrl.bp_hit.exchange(false);
-                ctrl.run_mode.store(false, std::memory_order_release);
-                step_trap = false;
-                {
-                    std::lock_guard<std::mutex> lk(uid.mu);
-                    uid.halted  = !bp;   // not a breakpoint → HALT
-                    uid.running = false;
+                if (step_trap && sim.readPC() >= 0x3000) {
+                    // PRE_INST callback fired: TRAP returned to user code.
+                    step_trap = false;
+                    ctrl.run_mode.store(false, std::memory_order_release);
+                    { std::lock_guard<std::mutex> lk(uid.mu); uid.running = false; }
+                } else if (bp) {
+                    // User breakpoint hit.
+                    step_trap = false;
+                    ctrl.run_mode.store(false, std::memory_order_release);
+                    { std::lock_guard<std::mutex> lk(uid.mu); uid.running = false; }
+                } else {
+                    // No breakpoint, no step_trap → HALT.
+                    step_trap = false;
+                    ctrl.run_mode.store(false, std::memory_order_release);
+                    {
+                        std::lock_guard<std::mutex> lk(uid.mu);
+                        uid.halted  = true;
+                        uid.running = false;
+                    }
                 }
             } else {
                 // Full slice completed – clear any stray bp_hit
                 ctrl.bp_hit.store(false, std::memory_order_relaxed);
-                // Check step-over completion
-                if (step_trap && sim.readPC() >= 0x3000) {
-                    step_trap = false;
-                    ctrl.run_mode.store(false, std::memory_order_release);
-                    { std::lock_guard<std::mutex> lk(uid.mu); uid.running = false; }
-                }
             }
 
-        } else if (ctrl.step_in_req.exchange(false)) {
-            { std::lock_guard<std::mutex> lk(uid.mu); uid.halted = false; }
-            sim.stepIn();
-
-        } else if (ctrl.step_over_req.exchange(false)) {
+        } else if (ctrl.step_in_req.exchange(false) || ctrl.step_over_req.exchange(false)) {
             { std::lock_guard<std::mutex> lk(uid.mu); uid.halted = false; }
             uint16_t pc    = sim.readPC();
             uint16_t instr = sim.readMem(pc);
