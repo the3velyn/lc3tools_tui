@@ -24,6 +24,8 @@ If you need to build from source instead, see the
 
 Make sure Python is installed (see platform specific installation instructions below), then run:
 
+Also make sure to uninstall the `lc3py` package if you installed it previously. It has been renamed to `lc3sim` to avoid a name collision with another python package. Run `pip3 uninstall lc3py`. You will only need to do this once. From then on, you can just use the following command to update the simulator.
+
 ```
 pip3 install --upgrade lc3sim --extra-index-url https://DougTownsend.github.io/lc3tools/simple/
 ```
