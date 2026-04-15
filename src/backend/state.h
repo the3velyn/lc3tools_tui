@@ -64,6 +64,17 @@ namespace core
 
         void registerDeviceReg(uint16_t mem_addr, PIDevice device);
 
+        // Fast bulk read for non-MMIO ranges (e.g. display memory).
+        // Returns a pointer to the raw MemLocation array starting at addr.
+        // Caller is responsible for staying within non-MMIO address space.
+        MemLocation const * rawMemPtr(uint16_t addr) const { return mem.data() + addr; }
+
+        // Flat mirror of memory values — contiguous uint16_t array updated on
+        // every writeMem().  Safe for unsynchronized reads from another thread
+        // because each element is a naturally-aligned uint16_t (atomic on all
+        // modern architectures).  Use for high-frequency display reads.
+        uint16_t const * flatMemPtr(void) const { return flat_mem.data(); }
+
         void enqueueInterrupt(InterruptType type) { pending_interrupts.push(type); }
         InterruptType peekInterrupt(void) const;
         InterruptType dequeueInterrupt(void);
@@ -83,6 +94,7 @@ namespace core
     private:
         // Hardware state.
         std::vector<MemLocation> mem;
+        std::vector<uint16_t> flat_mem;  // contiguous mirror of mem[].value
         std::vector<uint16_t> rf;
         std::unordered_map<uint16_t, PIDevice> mmio;
         uint16_t reset_pc, pc, ir;

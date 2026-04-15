@@ -67,3 +67,4 @@ dist/
 *.egg-info/
 .installed.cfg
 *.egg
+todo.md

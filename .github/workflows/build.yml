@@ -13,7 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-13, macos-14]
+        os: [ubuntu-22.04, macos-14]
+        # macos-14 = Apple Silicon (arm64).
+        # Intel Mac and Windows ARM wheels are not built — those users
+        # should build from source (see README).
 
     steps:
       - uses: actions/checkout@v4
@@ -28,25 +31,40 @@ jobs:
       - name: Build wheels
         run: cibuildwheel --output-dir wheelhouse
         env:
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
-          CIBW_SKIP: "*-musllinux*"
+          # Python 3.10–3.13 (3.9 is EOL)
+          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-musllinux* *-manylinux_i686"
 
-          CIBW_BEFORE_ALL_LINUX: >
-            dnf install -y qt5-qtbase-devel ncurses-devel pkgconf-pkg-config
+          CIBW_BEFORE_ALL_LINUX: "yum install -y qt5-qtbase-devel ncurses-devel pkgconfig"
 
-          CIBW_BEFORE_ALL_MACOS: >
-            brew install qt@5 pkg-config
+          CIBW_BEFORE_ALL_MACOS: "brew install qt pkg-config"
 
-          CIBW_ENVIRONMENT_MACOS: >
-            PKG_CONFIG_PATH="$(brew --prefix qt@5)/lib/pkgconfig"
+          # Set deployment target to 14.0 — Homebrew's Qt6 dylibs require it.
+          CIBW_ENVIRONMENT_MACOS: >-
+            PKG_CONFIG_PATH=$(brew --prefix qt)/lib/pkgconfig
+            MACOSX_DEPLOYMENT_TARGET=14.0
 
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
 
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+          # Don't bundle Qt shared libraries — they have deep plugin
+          # dependencies (xcb, cocoa) that are impractical to ship in a wheel.
+          # The wheel requires the system Qt runtime at execution time.
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair -w {dest_dir} {wheel}
-          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >
-            delocate-wheel --require-archs {delocate_archs} -w {dest_dir} {wheel}
+            --exclude libQt5Core.so.5
+            --exclude libQt5Gui.so.5
+            --exclude libQt5Widgets.so.5
+
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: >-
+            delocate-wheel --require-archs {delocate_archs} -w {dest_dir}
+            --exclude libQt5Core
+            --exclude libQt5Gui
+            --exclude libQt5Widgets
+            --exclude QtCore
+            --exclude QtGui
+            --exclude QtWidgets
+            {wheel}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -65,25 +83,66 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Qt5
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          arch: win64_msvc2019_64
+          cache: false
+          set-env: true
+
+      - name: Install PDCurses via vcpkg
+        run: vcpkg install pdcurses:x64-windows
+
+      - name: Debug Qt environment
+        run: |
+          echo "Qt5_DIR=$env:Qt5_DIR"
+          echo "Qt6_DIR=$env:Qt6_DIR"
+          echo "QT_ROOT_DIR=$env:QT_ROOT_DIR"
+          echo "VCPKG_INSTALLATION_ROOT=$env:VCPKG_INSTALLATION_ROOT"
+          if (Test-Path "$env:Qt5_DIR") { echo "Qt5_DIR exists" } else { echo "Qt5_DIR NOT FOUND" }
+          python -c "import os; qt=os.environ.get('QT_ROOT_DIR',''); qt5=os.environ.get('Qt5_DIR',''); print(f'QT_ROOT_DIR={qt}'); print(f'Qt5_DIR={qt5}')"
+
       - name: Build and install lc3py
-        run: pip install .
+        run: pip install . -v
+
+      - name: Verify installation
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -c "import lc3py; print('lc3py OK:', lc3py.__file__)"
+          python -c "import os; os.add_dll_directory(os.environ['QT_ROOT_DIR']+'\\bin'); os.add_dll_directory(os.environ['VCPKG_INSTALLATION_ROOT']+'\\installed\\x64-windows\\bin'); from lc3py.cli_bindings import curs_main; print('curs_main OK')"
 
       - name: Freeze executables with PyInstaller
+        working-directory: ${{ runner.temp }}
         run: |
+          $env:PATH = "$env:QT_ROOT_DIR\bin;$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin;$env:PATH"
           pip install pyinstaller
-          pyinstaller --onefile --console --name lc3asm --distpath dist\lc3asm installer\lc3asm_main.py
-          pyinstaller --onefile --console --name lc3sim --distpath dist\lc3sim installer\lc3sim_main.py
+          $src = "${{ github.workspace }}\installer"
+          $dst = "${{ github.workspace }}\dist"
+          $qt  = "$env:QT_ROOT_DIR\bin"
+          $vbin = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin"
+          pyinstaller --onefile --console --name lc3asm --distpath $dst\lc3asm $src\lc3asm_main.py
+          pyinstaller --onefile --console --name lc3sim --distpath $dst\lc3sim $src\lc3sim_main.py
+          pyinstaller --onefile --console --name lc3pysim --distpath $dst\lc3pysim `
+            --hidden-import lc3py.cli_bindings `
+            --runtime-hook $src\pyinstaller_qt_hook.py `
+            --add-binary "$qt\Qt5Core.dll;." `
+            --add-binary "$qt\Qt5Gui.dll;." `
+            --add-binary "$qt\Qt5Widgets.dll;." `
+            --add-binary "$env:QT_ROOT_DIR\plugins\platforms\qwindows.dll;platforms" `
+            $src\lc3pysim_main.py
 
-      - name: Install WiX v5
-        run: dotnet tool install --global wix
+      - name: Install WiX v4
+        run: dotnet tool install --global wix --version 4.0.6
 
       - name: Build MSI
+        working-directory: ${{ github.workspace }}
         run: wix build -o lc3tools.msi installer\lc3tools.wxs
 
       - uses: actions/upload-artifact@v4
         with:
           name: msi-windows
-          path: lc3tools.msi
+          path: ${{ github.workspace }}\lc3tools.msi
 
   # ── GitHub Release ────────────────────────────────────────
   release:
@@ -124,6 +183,11 @@ jobs:
           fetch-depth: 0
         continue-on-error: true
 
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Create gh-pages branch if needed
         run: |
           if ! git rev-parse --verify gh-pages 2>/dev/null; then
@@ -137,7 +201,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          mkdir -p simple/lc3py
+          mkdir -p simple/lc3sim
 
           WHEELS=$(gh release list --repo "$REPO" --limit 100 --json tagName -q '.[].tagName' | while read tag; do
             gh release view "$tag" --repo "$REPO" --json assets -q '.assets[].name' 2>/dev/null | grep '\.whl$' || true
@@ -153,18 +217,16 @@ jobs:
               echo "<a href=\"${URL}\">${whl}</a><br>"
             done
             echo '</body></html>'
-          } > simple/lc3py/index.html
+          } > simple/lc3sim/index.html
 
           {
             echo '<!DOCTYPE html><html><body>'
-            echo '<a href="lc3py/">lc3py</a>'
+            echo '<a href="lc3sim/">lc3py</a>'
             echo '</body></html>'
           } > simple/index.html
 
       - name: Deploy to GitHub Pages
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add simple/
           git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "Update package index for ${{ github.ref_name }}"
