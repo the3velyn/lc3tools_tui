@@ -3,8 +3,8 @@ requires = ["setuptools>=42", "wheel", "pybind11>=2.6.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lc3py"
-version = "0.1.0"
+name = "lc3sim"
+version = "0.2.0"
 description = "Python bindings for LC-3 Tools"
 requires-python = ">=3.7"
 dependencies = []

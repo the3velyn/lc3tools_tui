@@ -188,6 +188,35 @@ void lc3::sim::removeBreakpoint(uint16_t addr) { simulator.removeBreakpoint(addr
 
 bool lc3::sim::didExceedInstLimit(void) const { return total_inst_exec == target_inst_exec; }
 
+bool lc3::sim::runUntilHaltOrInput(uint64_t inst_limit)
+{
+    uint16_t pc = readPC();
+    uint16_t instr = readMem(pc);
+
+    // If already at HALT, do nothing.
+    if (instr == 0xF025) return false;
+
+    // If already at GETC, step past it first (execute the GETC and return
+    // from the trap), then continue to the next HALT or GETC.
+    if (instr == 0xF020) {
+        // Step through the GETC trap routine until PC returns to user code.
+        stepIn();  // enter trap
+        while (readPC() < 0x3000) stepIn();
+    }
+
+    // Now run until PC points to HALT or GETC.
+    uint64_t count = 0;
+    while (true) {
+        pc = readPC();
+        instr = readMem(pc);
+        if (instr == 0xF025) return false;  // HALT
+        if (instr == 0xF020) return true;   // GETC
+        if (inst_limit > 0 && count >= inst_limit) return false;
+        stepIn();
+        count++;
+    }
+}
+
 void lc3::sim::registerCallback(lc3::core::CallbackType type, lc3::sim::Callback func) { callbacks[type] = func; }
 
 lc3::utils::IPrinter & lc3::sim::getPrinter(void) { return printer; }

@@ -23,7 +23,11 @@ class Simulator:
     
     def assemble(self, asmfile, ret_symtab=False):
         if not ret_symtab:
-            return self.asm.assemble(asmfile)[0]
+            asm = self.asm.assemble(asmfile)
+            if asm != None:
+                return asm[0]
+            else:
+                return None
         else:
             return self.asm.assemble(asmfile)
 
@@ -71,3 +75,13 @@ class Simulator:
     
     def randomize(self):
         return self.sim.randomize(int(time.time()))
+
+    def reinit(self):
+        return self.sim.reinit()
+
+    def run_until_halt_or_input(self, inst_limit=0):
+        """Run until PC points to HALT or GETC.
+        Returns True if stopped at GETC, False if stopped at HALT.
+        If already at HALT, does nothing. If already at GETC, steps past
+        it and runs to the next HALT or GETC."""
+        return self.sim.run_until_halt_or_input(inst_limit)

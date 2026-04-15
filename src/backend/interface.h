@@ -64,6 +64,12 @@ namespace lc3
 
         bool didExceedInstLimit(void) const;
 
+        // Run until PC points to HALT (0xF025) or GETC (0xF020).
+        // Returns true if stopped at GETC, false if stopped at HALT.
+        // If already at HALT, does nothing and returns false.
+        // If already at GETC, runs past it to the next HALT or GETC.
+        bool runUntilHaltOrInput(uint64_t inst_limit = 0);
+
         void registerCallback(core::CallbackType type, Callback func);
 
         utils::IPrinter & getPrinter(void);

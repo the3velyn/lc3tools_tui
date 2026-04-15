@@ -9,6 +9,10 @@ namespace py = pybind11;
 int asm_main(int argc, char ** const argv);
 int sim_main(int argc, char ** const argv);
 
+#ifdef HAS_CURS_MAIN
+int curs_main(std::vector<std::string> args, std::string python_exe);
+#endif
+
 int asm_main_py(std::vector<std::string> args){
     int argc = static_cast<int>(args.size());
     std::vector<char*> argv;
@@ -81,14 +85,21 @@ public:
 PYBIND11_MODULE(cli_bindings, m) {
 
     m.def("asm_main", [](std::vector<std::string> args) {
-        // ... conversion logic ...
         return asm_main_py(args);
     });
-    
+
     m.def("sim_main", [](std::vector<std::string> args) {
-        // ... conversion logic ...
         return sim_main_py(args);
     });
+
+#ifdef HAS_CURS_MAIN
+    m.def("curs_main",
+        [](std::vector<std::string> args, std::string python_exe) {
+            return curs_main(args, python_exe);
+        },
+        py::arg("args"), py::arg("python_exe") = "python3",
+        "Run the ncurses-based LC-3 simulator TUI");
+#endif
 }
 
 
@@ -140,6 +151,10 @@ PYBIND11_MODULE(core, m) {
         .def("step_over", &lc3::sim::stepOver, "Execute a single instruction")
         .def("step_out", &lc3::sim::stepOut, "Execute a single instruction")
         .def("randomize", &lc3::sim::randomizeState, "Randomize the simulator memory and regs")
+        .def("reinit", &lc3::sim::zeroState, "Reinitialize the simulator")
+        .def("run_until_halt_or_input", &lc3::sim::runUntilHaltOrInput,
+            py::arg("inst_limit") = 0,
+            "Run until PC points to HALT or GETC. Returns true if GETC, false if HALT.")
         
         // Memory and Register Access
         .def("read_psr", &lc3::sim::readPSR, "Read the PSR")
