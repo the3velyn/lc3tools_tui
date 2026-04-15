@@ -2,19 +2,27 @@
 
 ## Quick Install (pre-built, recommended)
 
-Pre-built packages are available for **Linux** and **Mac**. No compiler or
-system libraries are needed — just Python.
+### Windows
 
-Make sure Python is installed
-([python.org/downloads](https://www.python.org/downloads/)), then run:
+Download and run
+[`lc3tools.msi`](https://github.com/DougTownsend/lc3tools/releases/latest/download/lc3tools.msi).
+The installer adds `lc3asm`, `lc3sim`, and `lc3pysim` to your PATH
+automatically. You may need to close and reopen PowerShell after installing.
 
-```
-pip3 install lc3sim --extra-index-url https://DougTownsend.github.io/lc3tools/simple/
-```
+> If you previously installed lc3tools with pip, uninstall it first to avoid
+> conflicts:
+>
+> ```powershell
+> pip3 uninstall lc3py
+> pip3 uninstall lc3sim
+> ```
 
-pip automatically picks the right file for your OS and Python version.
+If you need to build from source instead, see the
+[Windows build instructions](#windows) below.
 
-To update later, run the same command with `--upgrade`:
+### Mac / Linux
+
+Make sure Python is installed (see platform specific installation instructions below), then run:
 
 ```
 pip3 install --upgrade lc3sim --extra-index-url https://DougTownsend.github.io/lc3tools/simple/
@@ -23,23 +31,14 @@ pip3 install --upgrade lc3sim --extra-index-url https://DougTownsend.github.io/l
 You should now be able to use `lc3asm`, `lc3sim`, and `lc3pysim` in your
 terminal.
 
-> **Linux users:** `lc3pysim` requires the Qt5 runtime for its display window.
+> **Linux:** `lc3pysim` requires the Qt5 runtime for its display window.
 > Install it with:
 > - Ubuntu/Debian: `sudo apt install libqt5widgets5`
 > - Fedora: `sudo dnf install qt5-qtbase`
 >
 > `lc3asm` and `lc3sim` work without Qt5.
 
-> **Mac users:** `lc3pysim` requires Qt. Install it with: `brew install qt`
-
-> **Windows users:** Download and run
-> [`lc3tools.msi`](https://github.com/DougTownsend/lc3tools/releases/latest/download/lc3tools.msi)
-> instead. The installer adds `lc3asm`, `lc3sim`, and `lc3pysim` to your PATH
-> automatically. You may need to close and reopen PowerShell after installing.
-> If you previously installed lc3tools with pip, uninstall it first to avoid
-> conflicts: `pip3 uninstall lc3py`
->
-> If you need to build from source, see the [Windows](#windows) section below.
+> **Mac:** `lc3pysim` requires Qt. Install it with: `brew install qt`
 
 ---
 
@@ -178,24 +177,6 @@ To update to the latest stable version:
 
 ```bash
 cd ~/lc3tools
-git pull origin master
-pip3 install .
-```
-
-To try the latest development version (may be unstable):
-
-```bash
-cd ~/lc3tools
-git checkout dev
-git pull origin dev
-pip3 install .
-```
-
-To switch back to the stable branch:
-
-```bash
-cd ~/lc3tools
-git checkout master
 git pull origin master
 pip3 install .
 ```
