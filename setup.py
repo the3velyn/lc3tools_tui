@@ -101,19 +101,25 @@ if sys.platform == 'win32':
         cli_ext_sources = core_cli_sources
 else:
     # Unix: enable curs_main with ncurses + Qt (try Qt6, fall back to Qt5)
-    cli_compile_args.append("-DHAS_CURS_MAIN")
-    cli_libraries.append("ncurses")
-
     qt_cflags = _pkgconfig("--cflags", "Qt6Widgets")
     qt_libs   = _pkgconfig("--libs",   "Qt6Widgets")
     if not qt_cflags and not qt_libs:
         qt_cflags = _pkgconfig("--cflags", "Qt5Widgets")
         qt_libs   = _pkgconfig("--libs",   "Qt5Widgets")
-    cli_include_dirs += [f[2:] for f in qt_cflags if f.startswith("-I")]
-    cli_compile_args += [f for f in qt_cflags if not f.startswith("-I")]
-    cli_lib_dirs     += [f[2:] for f in qt_libs if f.startswith("-L")]
-    cli_libraries    += [f[2:] for f in qt_libs if f.startswith("-l")]
-    cli_link_args    += [f for f in qt_libs if not f.startswith(("-L", "-l"))]
+
+    if qt_cflags or qt_libs:
+        # Qt found — enable curs_main (lc3pysim TUI)
+        cli_ext_sources = cli_sources
+        cli_compile_args.append("-DHAS_CURS_MAIN")
+        cli_libraries.append("ncurses")
+        cli_include_dirs += [f[2:] for f in qt_cflags if f.startswith("-I")]
+        cli_compile_args += [f for f in qt_cflags if not f.startswith("-I")]
+        cli_lib_dirs     += [f[2:] for f in qt_libs if f.startswith("-L")]
+        cli_libraries    += [f[2:] for f in qt_libs if f.startswith("-l")]
+        cli_link_args    += [f for f in qt_libs if not f.startswith(("-L", "-l"))]
+    else:
+        # No Qt available — build without lc3pysim (lc3asm and lc3sim still work)
+        cli_ext_sources = core_cli_sources
 
 ext_modules = [
     Extension(
