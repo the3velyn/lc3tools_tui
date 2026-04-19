@@ -158,6 +158,12 @@ private:
 
 enum class Mode { BREAK, RUNNING, SLOW_RUN, SET_BREAKPOINT, GOTO_ADDRESS };
 
+// Display peripheral framebuffer: upstream pygame display renders a
+// 128×124 grid starting at 0xC000, one word per cell with 5-6-5 RGB.
+static constexpr uint16_t DISP_BASE = 0xC000;
+static constexpr int DISP_W = 128;
+static constexpr int DISP_H = 124;
+
 struct SharedState {
     std::mutex mtx;
 
@@ -176,16 +182,31 @@ struct SharedState {
     std::string reg_sym[8];
 
     std::deque<std::string> console_lines;
+    // Console scroll offset: 0 == follow tail (auto-scroll), N == lines from bottom
+    std::atomic<int> console_scroll{0};
+
+    // Input sources loaded at startup — used to reassemble (B2) and reinit (B3).
+    std::vector<std::string> asm_sources;   // original .asm paths
+    std::vector<std::string> obj_sources;   // .obj paths (incl. those assembled from .asm)
 
     std::atomic<Mode> mode{Mode::BREAK};
     std::atomic<bool> quit{false};
-    std::atomic<bool> restart{false};
+    std::atomic<bool> restart{false};       // reset PC only
+    std::atomic<bool> reinit{false};        // zero state + reload obj files
+    std::atomic<bool> reassemble{false};    // run assembler on asm_sources
+    std::atomic<bool> step_in{false};       // single stepIn pending
+    std::atomic<bool> step_over{false};     // single stepOver pending
     std::atomic<bool> mem_locked{false};
     std::atomic<int>  baseaddr{0x01FE};
     std::atomic<int>  col0width{45};
 
     // Slow run: race through subroutines (JSR/JSRR/TRAP) at full speed
     std::atomic<bool> race_subroutines{true};
+
+    // Display peripheral panel visible
+    std::atomic<bool> display_visible{false};
+    // Snapshot of framebuffer (read each tick when visible)
+    std::vector<uint16_t> disp_snapshot;
 
     std::set<uint16_t> breakpoints;
     std::string bp_entry;
@@ -208,23 +229,18 @@ static bool is_jsr(uint16_t instr) {
 }
 
 static void sim_thread(SharedState & st, TuiPrinter & printer, TuiInputter & inputter,
-                       int argc, char ** argv, ScreenInteractive & screen)
+                       int /*argc*/, char ** /*argv*/, ScreenInteractive & screen)
 {
     lc3::sim simulator(printer, inputter, 4);
 
-    // Load pre-assembled .obj files (assembly done in main before TUI starts)
-    for (int i = 1; i < argc; ++i) {
-        std::string arg(argv[i]);
-        std::string ext = (arg.size() > 4) ? arg.substr(arg.size()-4) : "";
-
-        if (ext == ".obj") {
-            simulator.loadObjFile(arg);
-        } else if (ext == ".asm") {
-            // .asm was assembled in main(); load the resulting .obj
-            std::string obj_name = arg.substr(0, arg.size()-4) + ".obj";
-            simulator.loadObjFile(obj_name);
-        }
+    // Load pre-assembled .obj files (assembly done in main before TUI starts).
+    // Paths were pre-resolved into st.obj_sources so we can reload on reinit.
+    {
+        std::lock_guard<std::mutex> lk(st.mtx);
+        for (auto & obj : st.obj_sources)
+            simulator.loadObjFile(obj);
     }
+    simulator.writePC(0x3000);
 
     // For .obj-only files, fall back to scanning memory lines for labels
     {
@@ -266,22 +282,51 @@ static void sim_thread(SharedState & st, TuiPrinter & printer, TuiInputter & inp
     std::set<uint16_t> local_bp;
     bool skip_bp_once = false; // skip breakpoint check for one step after resuming
 
+    // Assembler reused for live reassemble ('a').  Errors go into a dedicated
+    // printer buffer so they land in the console, not the LC-3 output stream.
+    TuiPrinter as_printer;
+    lc3::as assembler(as_printer, 4, true);
+
+    auto reload_objs = [&]() {
+        std::lock_guard<std::mutex> lk(st.mtx);
+        for (auto & obj : st.obj_sources)
+            simulator.loadObjFile(obj);
+    };
+
+    auto push_console = [&](const std::string & s) {
+        std::lock_guard<std::mutex> lk(st.mtx);
+        for (char c : s) {
+            if (c == '\n') st.console_lines.push_back("");
+            else {
+                if (st.console_lines.empty()) st.console_lines.push_back("");
+                st.console_lines.back() += c;
+            }
+        }
+        while (st.console_lines.size() > 500) st.console_lines.pop_front();
+    };
+
     auto next_update = std::chrono::steady_clock::now();
     auto next_slow_step = std::chrono::steady_clock::now();
     Mode prev_mode = Mode::BREAK;
 
     while (!st.quit.load()) {
-        // Check for HALT
-        if (simulator.readMem(simulator.readPC()) == 0xF025) {
+        // Check for HALT (instruction at PC is TRAP x25) or machine clock stopped
+        bool machine_halted = (simulator.readMem(simulator.readPC()) == 0xF025)
+                           || !(simulator.readMCR() & 0x8000);
+        if (machine_halted) {
             st.mode.store(Mode::BREAK);
             racing_sub = false;
         }
 
         Mode m = st.mode.load();
 
-        // Detect mode transition: BREAK -> running, set skip flag immediately
-        if (prev_mode == Mode::BREAK && (m == Mode::RUNNING || m == Mode::SLOW_RUN))
-            skip_bp_once = true;
+        // Detect mode transition: reset racing state and set skip flag
+        if (prev_mode != m) {
+            if (m == Mode::RUNNING || m == Mode::SLOW_RUN) {
+                if (prev_mode == Mode::BREAK) skip_bp_once = true;
+                racing_sub = false;
+            }
+        }
         prev_mode = m;
 
         if (m == Mode::RUNNING) {
@@ -294,7 +339,6 @@ static void sim_thread(SharedState & st, TuiPrinter & printer, TuiInputter & inp
             }
         } else if (m == Mode::SLOW_RUN) {
             if (racing_sub) {
-                // Race through subroutine at full speed until we return to user space
                 simulator.stepIn();
                 if (simulator.readPC() >= 0x3000) {
                     racing_sub = false;
@@ -303,8 +347,9 @@ static void sim_thread(SharedState & st, TuiPrinter & printer, TuiInputter & inp
                     racing_sub = false;
                     st.mode.store(Mode::BREAK);
                 }
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
-            // Slow stepping happens in the periodic update block below
         } else {
             // BREAK or SET_BREAKPOINT — idle
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -326,6 +371,79 @@ static void sim_thread(SharedState & st, TuiPrinter & printer, TuiInputter & inp
                 st.restart.store(false);
                 simulator.writePC(0x3000);
                 racing_sub = false;
+            }
+
+            // B3: reinit — zero all memory/registers then reload obj files.
+            if (st.reinit.load()) {
+                st.reinit.store(false);
+                simulator.zeroState();        // A2
+                reload_objs();
+                simulator.writePC(0x3000);
+                racing_sub = false;
+                st.mode.store(Mode::BREAK);
+            }
+
+            // B2: live reassemble — re-run the assembler on each .asm source
+            // then reload everything.  Errors surface in the console.
+            if (st.reassemble.load()) {
+                st.reassemble.store(false);
+                bool ok = true;
+                std::vector<std::string> new_objs;
+                std::unordered_map<uint16_t, std::string> new_syms;
+                {
+                    std::lock_guard<std::mutex> lk(st.mtx);
+                    for (auto & asmf : st.asm_sources) {
+                        auto result = assembler.assemble(asmf);
+                        std::string err = as_printer.flush();
+                        if (!err.empty()) push_console(err);
+                        if (!result) {
+                            push_console("[reassemble failed: " + asmf + "]\n");
+                            ok = false;
+                            continue;
+                        }
+                        new_objs.push_back((*result).first);
+                        for (auto & pair : (*result).second)
+                            new_syms[(uint16_t)pair.second] = pair.first;
+                    }
+                    // Preserve any obj files that weren't produced from an .asm source
+                    for (auto & obj : st.obj_sources) {
+                        bool produced = false;
+                        for (auto & asmf : st.asm_sources) {
+                            std::string expected = asmf.substr(0, asmf.size() > 4 ? asmf.size()-4 : 0) + ".obj";
+                            if (obj == expected) { produced = true; break; }
+                        }
+                        if (!produced) new_objs.push_back(obj);
+                    }
+                    st.obj_sources = new_objs;
+                    st.symbols = new_syms;
+                }
+                if (ok) {
+                    simulator.zeroState();
+                    reload_objs();
+                    simulator.writePC(0x3000);
+                    push_console("[reassembled OK]\n");
+                }
+                racing_sub = false;
+                st.mode.store(Mode::BREAK);
+            }
+
+            // A5: step-over — backend tracks subroutine depth and returns
+            // when the CALL returns (or the current instruction completes).
+            if (st.step_over.load()) {
+                st.step_over.store(false);
+                if (simulator.readMem(simulator.readPC()) != 0xF025) {
+                    simulator.stepOver();
+                }
+                racing_sub = false;
+                st.mode.store(Mode::BREAK);
+            }
+            if (st.step_in.load()) {
+                st.step_in.store(false);
+                if (simulator.readMem(simulator.readPC()) != 0xF025) {
+                    simulator.stepIn();
+                }
+                racing_sub = false;
+                st.mode.store(Mode::BREAK);
             }
 
             // Slow run: execute one instruction per 500ms
@@ -402,6 +520,19 @@ static void sim_thread(SharedState & st, TuiPrinter & printer, TuiInputter & inp
                     e.val = simulator.readMem(addr);
                     e.line = simulator.getMemLine(addr);
                     st.mem_snapshot.push_back(e);
+                }
+
+                // B8: snapshot framebuffer only when panel is visible.
+                // readMem per cell is slow but adequate at 20Hz for a
+                // 128×124 region; upstream uses flatMemPtr for this but
+                // we don't have it plumbed into lc3::sim with API_VER=2.
+                if (st.display_visible.load()) {
+                    st.disp_snapshot.resize(DISP_W * DISP_H);
+                    for (int i = 0; i < DISP_W * DISP_H; ++i) {
+                        uint32_t a = (uint32_t)DISP_BASE + i;
+                        st.disp_snapshot[i] = (a <= 0xFFFF)
+                            ? simulator.readMem((uint16_t)a) : 0;
+                    }
                 }
             }
 
@@ -741,8 +872,9 @@ static Element render_hotkeys(SharedState & st) {
     } else if (m == Mode::BREAK) {
         std::string lock_str = st.mem_locked.load() ? "unlock" : "lock";
         std::string race_str = st.race_subroutines.load() ? "ON" : "OFF";
-        lines.push_back(text("s:slow-run r:run q:quit b:breakpoints e:restart"));
-        lines.push_back(text("h/l:resize n:" + lock_str + "-mem j/k:scroll z:jump t:race-subs[" + race_str + "]"));
+        std::string disp_str = st.display_visible.load() ? "ON" : "OFF";
+        lines.push_back(text("s:slow-run r:run i:step-in o:step-over q:quit b:bp e:restart E:reinit a:reassemble"));
+        lines.push_back(text("h/l:resize n:" + lock_str + "-mem j/k:scroll z:jump c:clear-console d:display[" + disp_str + "] t:race[" + race_str + "] PgUp/PgDn:console-scroll"));
     } else if (m == Mode::SET_BREAKPOINT) {
         std::lock_guard<std::mutex> lk(st.mtx);
         lines.push_back(text("Toggle breakpoint (hex addr or label): " + st.bp_entry));
@@ -758,17 +890,59 @@ static Element render_console(SharedState & st) {
     ScopedTimer _t("render_console");
     Elements lines;
 
-    std::lock_guard<std::mutex> lk(st.mtx);
-    for (auto & line : st.console_lines) {
-        lines.push_back(text(line.empty() ? " " : line));
+    int scroll;
+    {
+        std::lock_guard<std::mutex> lk(st.mtx);
+        for (auto & line : st.console_lines) {
+            lines.push_back(text(line.empty() ? " " : line));
+        }
+        scroll = st.console_scroll.load();
     }
 
     if (lines.empty()) {
         lines.push_back(text(""));
     }
 
-    return window(text(" Console "),
-        vbox(std::move(lines)) | flex | focusPositionRelative(0, 1) | frame | flex);
+    // scroll==0 means follow tail (focus last line); positive values step up.
+    float rel_y = (scroll > 0) ? 0.f : 1.f;
+    auto focused = (scroll > 0)
+        ? vbox(std::move(lines)) | flex | focusPositionRelative(0, rel_y) | frame | flex
+        : vbox(std::move(lines)) | flex | focusPositionRelative(0, 1) | frame | flex;
+
+    std::string title = " Console ";
+    if (scroll > 0) title = " Console (scroll -" + std::to_string(scroll) + ") ";
+    return window(text(title), focused);
+}
+
+// B8: display peripheral panel — render 128×124 framebuffer into an FTXUI
+// canvas.  Each LC-3 word encodes 5-6-5 RGB (matching upstream's pygame
+// display peripheral).
+static Element render_display(SharedState & st) {
+    std::vector<uint16_t> snap;
+    {
+        std::lock_guard<std::mutex> lk(st.mtx);
+        snap = st.disp_snapshot;
+    }
+    if ((int)snap.size() < DISP_W * DISP_H) {
+        return window(text(" Display "), text("(no data yet)"));
+    }
+
+    int cw = DISP_W;
+    int ch = DISP_H;
+    auto c = Canvas(cw, ch);
+    for (int y = 0; y < DISP_H; ++y) {
+        for (int x = 0; x < DISP_W; ++x) {
+            uint16_t v = snap[y * DISP_W + x];
+            int r5 = (v >> 11) & 0x1F;
+            int g6 = (v >>  5) & 0x3F;
+            int b5 =  v        & 0x1F;
+            int r = (r5 << 3) | (r5 >> 2);
+            int g = (g6 << 2) | (g6 >> 4);
+            int b = (b5 << 3) | (b5 >> 2);
+            c.DrawPoint(x, y, true, Color::RGB(r, g, b));
+        }
+    }
+    return window(text(" Display "), canvas(std::move(c)));
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -795,7 +969,6 @@ int main(int argc, char ** argv) {
     // Pre-assemble .asm files before starting TUI (so errors print to terminal)
     TuiPrinter asm_printer;
     lc3::as assembler(asm_printer, 4, true);
-    std::vector<std::string> obj_files;
     SharedState st;
 
     for (int i = 1; i < argc; ++i) {
@@ -804,11 +977,12 @@ int main(int argc, char ** argv) {
         std::string ext = (arg.size() > 4) ? arg.substr(arg.size()-4) : "";
 
         if (ext == ".obj") {
-            obj_files.push_back(arg);
+            st.obj_sources.push_back(arg);
         } else if (ext == ".asm") {
+            st.asm_sources.push_back(arg);
             auto result = assembler.assemble(arg);
             if (result) {
-                obj_files.push_back((*result).first);
+                st.obj_sources.push_back((*result).first);
                 for (auto & pair : (*result).second)
                     st.symbols[(uint16_t)pair.second] = pair.first;
             } else {
@@ -845,15 +1019,26 @@ int main(int argc, char ** argv) {
 
         int col0w = st.col0width.load();
 
+        Element right_col;
+        if (st.display_visible.load()) {
+            right_col = vbox({
+                render_hotkeys(st),
+                render_display(st),
+                render_console(st) | flex,
+            }) | flex;
+        } else {
+            right_col = vbox({
+                render_hotkeys(st),
+                render_console(st) | flex,
+            }) | flex;
+        }
+
         return hbox({
             vbox({
                 render_registers(st),
                 render_memory(st) | flex,
             }) | size(WIDTH, EQUAL, col0w),
-            vbox({
-                render_hotkeys(st),
-                render_console(st) | flex,
-            }) | flex,
+            right_col,
         });
     });
 
@@ -892,6 +1077,26 @@ int main(int argc, char ** argv) {
             if (event == Event::Character('j')) { st.mem_locked.store(true); st.baseaddr.fetch_add(1); return true; }
             if (event == Event::Character('k')) { st.mem_locked.store(true); st.baseaddr.fetch_sub(1); return true; }
             if (event == Event::Character('e')) { st.restart.store(true); return true; }
+            if (event == Event::Character('E')) { st.reinit.store(true); return true; }
+            if (event == Event::Character('a')) { st.reassemble.store(true); return true; }
+            if (event == Event::Character('i')) { st.step_in.store(true); return true; }
+            if (event == Event::Character('o')) { st.step_over.store(true); return true; }
+            if (event == Event::Character('c')) {
+                std::lock_guard<std::mutex> lk(st.mtx);
+                st.console_lines.clear();
+                st.console_scroll.store(0);
+                return true;
+            }
+            if (event == Event::Character('d')) {
+                st.display_visible.store(!st.display_visible.load());
+                return true;
+            }
+            if (event == Event::PageUp)   { st.console_scroll.fetch_add(5); return true; }
+            if (event == Event::PageDown) {
+                int cur = st.console_scroll.load();
+                st.console_scroll.store(std::max(0, cur - 5));
+                return true;
+            }
             if (event == Event::Character('b')) {
                 std::lock_guard<std::mutex> lk(st.mtx);
                 st.bp_entry.clear();

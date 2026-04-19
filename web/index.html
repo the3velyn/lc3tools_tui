@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LC-3 Simulator</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="pane-left-top" class="pane">
+      <div class="pane-title tab-bar">
+        <button class="tab-btn active" data-tabgroup="left" data-tab="regs">Regs</button>
+        <button class="tab-btn" data-tabgroup="left" data-tab="controls">Controls</button>
+      </div>
+      <div id="pane-regs" class="tab-content active">
+        <div id="regs-content" class="pane-body"></div>
+      </div>
+      <div id="pane-controls" class="tab-content" style="display:none">
+        <div id="hotkeys-content" class="pane-body"></div>
+      </div>
+    </div>
+
+    <div id="pane-right" class="pane">
+      <div class="pane-title tab-bar">
+        <button class="tab-btn active" data-tabgroup="right" data-tab="editor">Editor</button>
+        <button class="tab-btn" data-tabgroup="right" data-tab="console">Console</button>
+        <span class="tab-actions" id="editor-actions">
+          <span id="status" class="status-text">No file loaded</span>
+          <label class="pane-btn" style="cursor:pointer">
+            Open
+            <input type="file" id="file-input" accept=".asm,.obj" multiple hidden>
+          </label>
+          <button id="btn-assemble" class="pane-btn">Assemble &amp; Load</button>
+        </span>
+        <span class="tab-actions" id="console-actions" style="display:none">
+          <button id="btn-load-editor" class="pane-btn">Load from Editor</button>
+          <button id="btn-run" title="r" class="pane-btn">Run</button>
+          <button id="btn-slow" title="s" class="pane-btn">Slow Run</button>
+          <button id="btn-pause" title="Esc" class="pane-btn">Pause</button>
+          <button id="btn-restart" title="e" class="pane-btn">Restart</button>
+          <button id="btn-reset" class="pane-btn">Reset</button>
+          <button id="btn-clear-output" class="pane-btn">Clear</button>
+        </span>
+      </div>
+      <div id="pane-editor" class="tab-content active"></div>
+      <div id="pane-console" class="tab-content" style="display:none">
+        <div id="console-content" class="pane-body"></div>
+      </div>
+    </div>
+
+    <div id="pane-memory" class="pane">
+      <div class="pane-title">Memory <button id="btn-follow-pc" class="pane-btn follow-active">Follow PC</button></div>
+      <div id="memory-content" class="pane-body"></div>
+    </div>
+  </div>
+
+  <div id="input-overlay" class="hidden">
+    <div id="input-prompt"></div>
+    <input type="text" id="input-field" autocomplete="off" spellcheck="false">
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

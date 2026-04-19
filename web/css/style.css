@@ -1,0 +1,390 @@
+:root {
+  --bg: #1a1a2e;
+  --bg-pane: #16213e;
+  --bg-pane-title: #0f3460;
+  --border: #0f3460;
+  --text: #e0e0e0;
+  --text-dim: #8899aa;
+  --green: #00ff00;
+  --red: #ff4444;
+  --yellow: #ffff44;
+  --cyan: #44ffff;
+  --magenta: #ff44ff;
+  --orange: #ff8844;
+  --col0-width: 40%;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.status-text {
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+
+/* ── App Grid ────────────────────────────────────────── */
+#app {
+  display: grid;
+  grid-template-columns: var(--col0-width) 1fr;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "left-top  right"
+    "memory    right";
+  height: 100vh;
+  overflow: hidden;
+  gap: 1px;
+  background: var(--border);
+}
+
+/* ── Panes ───────────────────────────────────────────── */
+.pane {
+  background: var(--bg-pane);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane-title {
+  background: var(--bg-pane-title);
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--cyan);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+
+.pane-btn {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Only add margin when pane-btn is directly in pane-title (not in tab-actions) */
+.pane-title > .pane-btn { margin-left: 8px; }
+.pane-btn:hover { background: rgba(255,255,255,0.2); color: var(--text); }
+.pane-btn.active { background: var(--green); color: #000; border-color: var(--green); }
+.pane-btn.active:hover { background: #44ff44; }
+.pane-btn.follow-active { background: var(--cyan); color: #000; border-color: var(--cyan); }
+.pane-btn.follow-active:hover { background: #66ffff; }
+
+.pane-body {
+  padding: 4px 8px;
+  overflow: hidden;
+  flex: 1;
+  white-space: pre;
+}
+
+/* Scrollable pane bodies */
+#pane-console .pane-body,
+#pane-controls .pane-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+#pane-console, #pane-controls {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#pane-regs {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#pane-left-top { grid-area: left-top; display: flex; flex-direction: column; }
+#pane-memory   { grid-area: memory; }
+#pane-right    { grid-area: right; display: flex; flex-direction: column; }
+
+/* ── Tabs ────────────────────────────────────────────── */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tab-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  padding: 3px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+
+.tab-actions { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+
+.tab-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.tab-content.active { display: flex; }
+
+/* ── Editor ──────────────────────────────────────────── */
+#pane-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.editor-wrap {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.editor-gutter {
+  width: 52px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  padding: 4px 0 4px 2px;
+  text-align: right;
+  overflow: hidden;
+  flex-shrink: 0;
+  user-select: none;
+  border-right: 1px solid var(--border);
+}
+
+.gutter-line {
+  height: 18px;
+  line-height: 18px;
+  cursor: pointer;
+  padding-right: 4px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.gutter-line:hover { color: var(--cyan); }
+.gutter-error { color: var(--red); }
+
+.editor-code-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Highlight overlay and textarea must share IDENTICAL text layout */
+.editor-highlight, .editor-textarea {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  padding: 4px 8px;
+  tab-size: 8;
+  white-space: pre;
+  word-wrap: normal;
+  overflow-y: auto;
+  overflow-x: auto;
+  letter-spacing: normal;
+  word-spacing: normal;
+}
+
+.editor-highlight {
+  pointer-events: none;
+  z-index: 0;
+  background: var(--bg-pane);
+  /* highlight renders colored text */
+}
+
+.editor-textarea {
+  color: transparent;
+  caret-color: var(--text);
+  background: transparent;
+  z-index: 1;
+  -webkit-text-fill-color: transparent;
+}
+
+.editor-errors {
+  background: #2a1020;
+  border-top: 1px solid var(--red);
+  max-height: 80px;
+  overflow-y: auto;
+  font-size: 12px;
+  display: none;
+}
+
+.error-item {
+  padding: 2px 8px;
+  color: var(--red);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.error-item:hover { background: rgba(255, 68, 68, 0.1); }
+
+/* ── Editor syntax highlighting ──────────────────────── */
+.hl-line {
+  height: 18px;
+  line-height: 18px;
+  white-space: pre;
+}
+.hl-indent-guide {
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hl-mnemonic  { color: var(--cyan); font-weight: bold; }
+.hl-directive { color: var(--red); }
+.hl-register  { color: var(--green); }
+.hl-number    { color: var(--magenta); }
+.hl-string    { color: var(--yellow); }
+.hl-comment   { color: var(--text-dim); }
+.hl-label     { color: var(--orange); }
+
+/* ── Register Pane ───────────────────────────────────── */
+.reg-header {
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  padding-bottom: 2px;
+}
+
+.reg-line { white-space: pre; }
+.reg-changed { color: var(--green); font-weight: bold; }
+.reg-sym { color: var(--cyan); margin-left: 4px; }
+
+.cc-n { color: var(--red); font-weight: bold; }
+.cc-z { color: var(--yellow); font-weight: bold; }
+.cc-p { color: var(--green); font-weight: bold; }
+
+.pc-line { font-weight: bold; }
+.pc-changed { color: var(--green); font-weight: bold; }
+
+/* ── Memory Pane ─────────────────────────────────────── */
+.mem-line {
+  white-space: pre;
+  cursor: pointer;
+  padding: 1px 2px;
+  border-radius: 2px;
+  transition: background 0.1s;
+  user-select: none;
+}
+.mem-line:hover { background: rgba(255, 255, 255, 0.08); }
+.mem-pc { background: #e0e0e0; color: #1a1a2e; font-weight: bold; }
+.mem-pc:hover { background: #c0c0c0; }
+.mem-bp { color: var(--red); }
+.mem-bp:hover { background: rgba(255, 68, 68, 0.15); }
+.mem-trap { color: var(--text-dim); }
+
+.mem-marker { display: inline; }
+.mem-addr { color: var(--text-dim); }
+.mem-label { color: var(--yellow); }
+
+/* Syntax highlighting */
+.syn-mnemonic { color: var(--cyan); font-weight: bold; }
+.syn-directive { color: var(--red); }
+.syn-register { color: var(--green); }
+.syn-number { color: var(--magenta); }
+.syn-string { color: var(--yellow); }
+.syn-comment { color: var(--text-dim); }
+.syn-strdata { color: var(--yellow); opacity: 0.6; }
+.syn-raw { color: var(--text-dim); }
+
+/* ── Hotkeys Pane ────────────────────────────────────── */
+#hotkeys-content {
+  font-size: 12px;
+}
+
+.hotkey-mode {
+  color: var(--orange);
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.hotkey-key {
+  color: var(--cyan);
+  font-weight: bold;
+}
+
+.hotkey-desc {
+  color: var(--text-dim);
+}
+
+.toggle-on { color: var(--green); font-weight: bold; }
+.toggle-off { color: var(--red); }
+
+/* ── Console Pane ────────────────────────────────────── */
+#console-content {
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* ── Input Overlay ───────────────────────────────────── */
+#input-overlay {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg-pane-title);
+  border-top: 2px solid var(--cyan);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+}
+
+#input-overlay.hidden { display: none; }
+
+#input-prompt {
+  color: var(--cyan);
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+#input-field {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  flex: 1;
+  outline: none;
+}
+#input-field:focus { border-color: var(--cyan); }
+
+/* ── Scrollbar ───────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #1a4a7e; }
