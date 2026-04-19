@@ -1,85 +1,65 @@
-# LC3Tools [![Build Status]
-
-## Installation
-
-### Windows
-
-In PowerShell, run the following commands:
-```
+# Evelyn's **lc3tools** fork: a C++ TUI with additional quality-of-life features.
+### Prerequisites:
+- Python >3.7
+- CMake
+- (Windows) MSVC
+## Installing on Windows: (The following commands to install pre-requisites have yet to be tested. Please reach out if they don't work.)
+Prerequisites:
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools"
+winget install Kitware.CMake
 winget install Git.Git --source winget
 winget install python3 --source winget
-winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" --source winget
+pip install cmake
 ```
-Close and reopen PowerShell, and run the following commands:
-```
+Installation:
+```powershell
 cd ~
-git clone https://github.com/DougTownsend/lc3tools
-cd lc3tools
-pip3 install windows-curses
+git clone https://github.com/the3velyn/lc3tools_tui
+cd lc3tools_tui
 pip3 install .
 ```
-
-## Mac
-
-To do
-
-## Linux
-
-To do
-
-## Original Readme:
-
-LC3Tools is a modern set of tools to build code for and simulate the LC-3
-system described in *Introduction to Computing* by Dr. Yale Patt and Dr. Sanjay
-Patel.
-
-This project has the following aims:
-
-* Consistent cross-platform support (across Windows, macOS, and Linux)
-* Consistent behavior across the GUI, command line tools, and other applications
-* Intuitive user interface
-* Powerful testing API for unit tests and auto-graders
-* Well-documented, simple, open-source code base
-
-All of the code for the project lives in this repository, but it can be broken
-down into three components: a set of command line tools, a GUI, and a series of
-unit tests.
-
-## Quick Start
-LC3Tools has two primary use cases.  Students will genenerally use the GUI,
-which can be downloaded from the
-[Releases](https://github.com/chiragsakhuja/lc3tools/releases) tab.  For
-information on which download is correct for you, refer to the
-[downloading/installing guide](DownloadingAndInstalling.pdf).  To learn how to
-use the GUI, refer to the [beginniner's usage guide](GuideToUsingLC3Tools.pdf).
-
-Instructors, or students who are comfortable with the command line, will
-generally use the command line tools, which is also the only way to write unit
-tests.  Note that auto-graders are written as unit tests.  To get started,
-follow these steps, which can be performed on any supported platform:
-1. Ensure you have [CMake](https://cmake.org) and a C++11 compiler installed.
-2. Build the command line utilities from source as described in the 
-   [build document](BUILD.md#command-line-tools-and-unit-tests).
-3. Follow the unit test tutorial in the [unit test document](TEST.md).
-4. Refer to the [command line tools document](CLI.md).
-5. Refer to the samples provided in the `src/test/tests/samples` directory.
-6. Refer to the [API document](API.md) to learn about the full unit testing
-   capabilities.
-7. (For instructors) Refer to the [Grader document](GRADER.md) to learn about
-   the script that performs batch grading in a classroom context.
-
-In some cases, instructors may want to modify the GUI as well.  In addition to
-the requirements for the command line utilities, you will need to have
-[NodeJS](https://nodejs.org/en/) and [Yarn](https://yarnpkg.com/en/) installed.
-The [build document](BUILD.md#gui) also contains directions on how to build the
-GUI.
-
-## Additional Information
-More details on how to use the individual components can be found in the
-[command line tools](CLI.md), [GUI](GUI.md), and [unit test](TEST.md)
-documents.
-
-# Copyright Notice
-Copyright 2020 &copy; McGraw-Hill Education. All rights reserved. No
-reproduction or distribution without the prior written consent of McGraw-Hill
-Education.
+Update:
+```powershell
+cd ~/lc3tools_tui
+git pull
+cd lc3tools_tui
+pip3 install .
+```
+## Installing on Linux (Debian-based):
+```bash
+cd ~
+git clone https://github.com/the3velyn/lc3tools_tui
+cd lc3tools_tui
+pip3 install .
+```
+Update:
+```bash
+cd ~/lc3tools_tui
+git pull
+cd lc3tools_tui
+pip3 install .
+```
+## Usage:
+- `lc3tui PROGRAM.asm`: run lc3 assembly program in PROGRAM.asm.
+- `lc3tui PROGRAM.obj`: legacy support to run pre-compiled programs.
+- `lc3asm PROGRAM.asm`: compile PROGRAM.asm into PROGRAM.obj.
+- `lc3pysim PROGRAM.obj`: run a compiled program called PROGRAM using python. Made by DougTownsend, unmodified.
+## Additional Features (`lc3tui` only):
+- The simulator now takes .asm file and assembles the program in-house, exiting and printing errors if any occur.
+  - It can accept .obj programs for backwards compatibility.
+- Profiling if run with `--profile` flag.
+- Z: zip/jump to location in memory (hex code or label), unlocks memory window. Does not move PC.
+- R: run at full speed; "Race to halt".
+- S: slow run, step every 0.5s.
+  - Note that "step" functionality is removed, a single instruction can be executed by pressing S + Esc within 0.5s.
+- T: toggle race-subs; ON means subroutines will run at full speed (similar to STEP OVER), OFF means subroutines will slow run (like STEP IN).
+- Esc: pause simulator if running.
+- Q: quit simulator if paused.
+- J/K: scroll memory.
+- H/L: move pane division.
+- All labels are preserved in the memory window.
+- The breakpoints hotkey can use labels, and configure priority for cases where labels look like hex codes.
+- Color coding in the memory window: labels have a color and standard syntax highlighting is used on lc3 instructions.
+- If a register contains a direct address in the user space that has a label, the label appears in register area.
+  - Ex.: `lea r0, str_prompt1`: `r0` will show `@str_prompt1`. This works through traps as well.
