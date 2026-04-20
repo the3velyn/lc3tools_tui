@@ -214,29 +214,34 @@ function staticCheck(sourceLines, analysisResult) {
       if (tok.startsWith('"')) continue;
       if (tok.startsWith(';')) break;
 
-      // Check for invalid register
+      // Check for invalid register (e.g. R8, R9)
       if (/^R\d+$/i.test(tok) && !REGISTERS.has(upper)) {
         newErrors.push({ line: lineNum, msg: `Invalid register '${tok}'` });
         continue;
       }
-
-      // Skip valid registers
       if (REGISTERS.has(upper)) continue;
 
-      // Check if it's a number
-      if (/^[#xXbB0-9\-]/.test(tok)) {
-        const val = parseNumber(tok);
-        if (isNaN(val)) {
-          newErrors.push({ line: lineNum, msg: `Invalid number '${tok}'` });
-        }
+      // Known label? accept — resolves forward/back refs.
+      if (labels.has(tok.toLowerCase())) continue;
+
+      // Well-formed number literal? accept.
+      if (/^#-?\d+$/.test(tok) ||
+          /^0[xX][0-9a-fA-F]+$/.test(tok) ||
+          /^[xX][0-9a-fA-F]+$/.test(tok) ||
+          /^[bB][01]+$/.test(tok) ||
+          /^-?\d+$/.test(tok)) {
         continue;
       }
 
-      // Otherwise it should be a label reference
+      // Starts unambiguously number-ish but isn't well-formed → malformed number.
+      if (/^[#\-]/.test(tok) || /^\d/.test(tok)) {
+        newErrors.push({ line: lineNum, msg: `Invalid number '${tok}'` });
+        continue;
+      }
+
+      // Label-shaped identifier → undefined label.
       if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tok)) {
-        if (!labels.has(tok.toLowerCase())) {
-          newErrors.push({ line: lineNum, msg: `Undefined label '${tok}'` });
-        }
+        newErrors.push({ line: lineNum, msg: `Undefined label '${tok}'` });
       }
     }
   }
